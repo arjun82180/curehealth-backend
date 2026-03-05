@@ -1,340 +1,760 @@
-"""
-AI Health Assistant - Disease Prediction Model Training
-Uses Random Forest + Naive Bayes ensemble on symptom-disease dataset
-Run this script once to train and save the model: python train_model.py
-"""
 
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score, classification_report
-import joblib
-import json
-import os
+from sklearn.metrics import accuracy_score
+import joblib, json, os
 
-# ─────────────────────────────────────────────
-# SYMPTOM-DISEASE DATASET
-# 132 symptoms × 42 diseases (expanded)
-# ─────────────────────────────────────────────
-
-ALL_SYMPTOMS = [
-    "itching","skin_rash","nodal_skin_eruptions","continuous_sneezing","shivering",
-    "chills","joint_pain","stomach_pain","acidity","ulcers_on_tongue","muscle_wasting",
-    "vomiting","burning_micturition","spotting_urination","fatigue","weight_gain",
-    "anxiety","cold_hands_and_feets","mood_swings","weight_loss","restlessness",
-    "lethargy","patches_in_throat","irregular_sugar_level","cough","high_fever",
-    "sunken_eyes","breathlessness","sweating","dehydration","indigestion","headache",
-    "yellowish_skin","dark_urine","nausea","loss_of_appetite","pain_behind_the_eyes",
-    "back_pain","constipation","abdominal_pain","diarrhoea","mild_fever","yellow_urine",
-    "yellowing_of_eyes","acute_liver_failure","fluid_overload","swelling_of_stomach",
-    "swelled_lymph_nodes","malaise","blurred_and_distorted_vision","phlegm",
-    "throat_irritation","redness_of_eyes","sinus_pressure","runny_nose","congestion",
-    "chest_pain","weakness_in_limbs","fast_heart_rate","pain_during_bowel_movements",
-    "pain_in_anal_region","bloody_stool","irritation_in_anus","neck_stiffness",
-    "word_finding_difficulty","spinning_movements","loss_of_balance","unsteadiness",
-    "weakness_of_one_body_side","loss_of_smell","bladder_discomfort","foul_smell_of_urine",
-    "continuous_feel_of_urine","passage_of_gases","internal_itching","toxic_look_(typhos)",
-    "depression","irritability","muscle_pain","altered_sensorium","red_spots_over_body",
-    "belly_pain","abnormal_menstruation","dischromic_patches","watering_from_eyes",
-    "increased_appetite","polyuria","family_history","mucoid_sputum","rusty_sputum",
-    "lack_of_concentration","visual_disturbances","receiving_blood_transfusion",
-    "receiving_unsterile_injections","coma","stomach_bleeding","distention_of_abdomen",
-    "history_of_alcohol_consumption","fluid_overload_1","blood_in_sputum",
-    "prominent_veins_on_calf","palpitations","painful_walking","pus_filled_pimples",
-    "blackheads","scurring","skin_peeling","silver_like_dusting","small_dents_in_nails",
-    "inflammatory_nails","blister","red_sore_around_nose","yellow_crust_ooze",
-    "prognosis","muscle_weakness","stiff_neck","swelling_joints","movement_stiffness",
-    "spinning_movements_2","loss_of_balance_2","unsteadiness_2","weakness_of_one_body_side_2",
-    "slurred_speech","knee_pain","hip_joint_pain","swelling","bruising","obesity",
-    "swollen_legs","swollen_blood_vessels","puffy_face_and_eyes","enlarged_thyroid",
-    "brittle_nails","swollen_extremeties","excessive_hunger","extra_marital_contacts",
-    "drying_and_tingling_lips","slurred_speech_2","knee_pain_2","hip_joint_pain_2",
-    "loss_of_smell_2","throat_irritation_2","redness_of_eyes_2","sinus_pressure_2",
-    "runny_nose_2","congestion_2"
-]
-
-# Simplified symptom list (user-friendly, maps to model features)
 USER_SYMPTOMS = {
-    "Fever": ["high_fever", "mild_fever"],
-    "Headache": ["headache"],
-    "Cough": ["cough", "mucoid_sputum", "rusty_sputum"],
-    "Sore Throat": ["throat_irritation", "patches_in_throat"],
-    "Runny Nose": ["runny_nose", "congestion"],
-    "Fatigue": ["fatigue", "lethargy", "malaise"],
-    "Body Aches": ["muscle_pain", "joint_pain", "back_pain"],
-    "Nausea": ["nausea"],
-    "Vomiting": ["vomiting"],
-    "Diarrhea": ["diarrhoea"],
-    "Chest Pain": ["chest_pain"],
-    "Shortness of Breath": ["breathlessness"],
-    "Dizziness": ["spinning_movements", "loss_of_balance", "unsteadiness"],
-    "Rash": ["skin_rash", "red_spots_over_body", "blister"],
-    "Itching": ["itching", "internal_itching"],
-    "Stomach Pain": ["stomach_pain", "abdominal_pain", "belly_pain"],
-    "Loss of Appetite": ["loss_of_appetite"],
-    "Chills": ["chills", "shivering"],
-    "Sweating": ["sweating"],
-    "Blurred Vision": ["blurred_and_distorted_vision", "visual_disturbances"],
-    "Ear Pain": ["pain_behind_the_eyes"],
-    "Weight Loss": ["weight_loss"],
-    "Swelling": ["swelling", "swelling_joints"],
-    "Palpitations": ["palpitations", "fast_heart_rate"],
-    "Anxiety": ["anxiety", "restlessness"],
-    "Constipation": ["constipation"],
-    "Dark Urine": ["dark_urine", "yellow_urine"],
-    "Yellowing Skin": ["yellowish_skin", "yellowing_of_eyes"],
-    "Neck Stiffness": ["stiff_neck", "neck_stiffness"],
-    "Acidity": ["acidity", "indigestion"],
-    "Dehydration": ["dehydration", "sunken_eyes"],
-    "Frequent Urination": ["polyuria", "continuous_feel_of_urine"],
-    "Muscle Weakness": ["muscle_weakness", "weakness_in_limbs"],
-    "Joint Stiffness": ["movement_stiffness", "swelling_joints"],
-    "Skin Peeling": ["skin_peeling", "silver_like_dusting"],
-    "Depression": ["depression", "mood_swings", "irritability"],
+    "Fever":["high_fever","mild_fever","fever"],
+    "Chills":["chills","shivering","rigor"],
+    "Fatigue":["fatigue","lethargy","malaise","tiredness"],
+    "Weakness":["muscle_weakness","weakness_in_limbs","generalized_weakness"],
+    "Weight Loss":["weight_loss","unexplained_weight_loss"],
+    "Weight Gain":["weight_gain","rapid_weight_gain"],
+    "Night Sweats":["sweating","night_sweats","cold_sweats"],
+    "Swollen Lymph Nodes":["swelled_lymph_nodes","lymphadenopathy"],
+    "Low Grade Fever":["low_grade_fever","intermittent_fever"],
+    "Loss of Appetite":["loss_of_appetite","anorexia"],
+    "Excessive Sweating":["hyperhidrosis","profuse_sweating"],
+    "Pallor":["pallor","pale_skin","paleness"],
+    "Swelling":["swelling","edema","puffiness"],
+    "Dehydration":["dehydration","dry_mouth","sunken_eyes"],
+    "Headache":["headache","severe_headache","mild_headache"],
+    "Dizziness":["dizziness","spinning_movements","loss_of_balance","unsteadiness"],
+    "Confusion":["confusion","altered_sensorium","disorientation"],
+    "Memory Loss":["memory_loss","forgetfulness","amnesia"],
+    "Seizures":["seizures","convulsions","fits"],
+    "Fainting":["fainting","syncope","blackout","loss_of_consciousness"],
+    "Tremors":["tremors","shaking_hands","resting_tremor"],
+    "Numbness":["numbness","tingling","paresthesia","pins_and_needles"],
+    "Paralysis":["paralysis","hemiplegia","weakness_of_one_body_side"],
+    "Slurred Speech":["slurred_speech","dysarthria","difficulty_speaking"],
+    "Lack of Concentration":["lack_of_concentration","brain_fog","poor_focus"],
+    "Irritability":["irritability","mood_swings","agitation"],
+    "Anxiety":["anxiety","nervousness","panic","worry"],
+    "Depression":["depression","sadness","hopelessness","low_mood"],
+    "Hallucinations":["hallucinations","delusions","psychosis"],
+    "Sleep Problems":["insomnia","sleep_disturbance","poor_sleep"],
+    "Excessive Sleepiness":["excessive_sleepiness","hypersomnia","somnolence"],
+    "Neck Stiffness":["neck_stiffness","stiff_neck","meningismus"],
+    "Personality Changes":["personality_changes","behavioral_changes"],
+    "Blurred Vision":["blurred_vision","visual_disturbances","blurred_and_distorted_vision"],
+    "Double Vision":["double_vision","diplopia"],
+    "Eye Pain":["eye_pain","ocular_pain","pain_behind_the_eyes"],
+    "Redness of Eyes":["redness_of_eyes","red_eye","conjunctival_redness"],
+    "Watery Eyes":["watering_from_eyes","lacrimation","tearing"],
+    "Sensitivity to Light":["photophobia","light_sensitivity"],
+    "Yellow Eyes":["yellowing_of_eyes","jaundiced_eyes","icterus"],
+    "Dry Eyes":["dry_eyes","xerophthalmia","eye_irritation"],
+    "Eye Discharge":["eye_discharge","purulent_discharge","eye_mucus"],
+    "Loss of Vision":["vision_loss","blindness","visual_field_defect"],
+    "Floaters":["floaters","flashes_of_light","vitreous_floaters"],
+    "Night Blindness":["night_blindness","nyctalopia"],
+    "Ear Pain":["ear_pain","otalgia","earache"],
+    "Hearing Loss":["hearing_loss","deafness","reduced_hearing"],
+    "Ringing in Ears":["tinnitus","ringing_ears","buzzing_ears"],
+    "Ear Discharge":["ear_discharge","otorrhea","ear_fluid"],
+    "Loss of Smell":["anosmia","loss_of_smell","reduced_smell"],
+    "Loss of Taste":["ageusia","loss_of_taste","altered_taste"],
+    "Runny Nose":["runny_nose","rhinorrhea","nasal_discharge"],
+    "Nasal Congestion":["nasal_congestion","blocked_nose","congestion"],
+    "Sneezing":["sneezing","frequent_sneezing"],
+    "Sinus Pressure":["sinus_pressure","sinusitis","facial_pain"],
+    "Nosebleed":["epistaxis","nosebleed","nasal_bleeding"],
+    "Sore Throat":["sore_throat","throat_pain","pharyngitis","throat_irritation"],
+    "Hoarseness":["hoarseness","voice_change","dysphonia"],
+    "Difficulty Swallowing":["dysphagia","difficulty_swallowing","odynophagia"],
+    "Mouth Ulcers":["mouth_ulcers","oral_ulcers","aphthous_ulcers","ulcers_on_tongue"],
+    "Dry Mouth":["dry_mouth","xerostomia"],
+    "Swollen Tonsils":["tonsillitis","swollen_tonsils","patches_in_throat"],
+    "Bad Breath":["halitosis","bad_breath"],
+    "Cough":["cough","dry_cough","productive_cough","mucoid_sputum"],
+    "Coughing Blood":["hemoptysis","blood_in_sputum","coughing_blood"],
+    "Shortness of Breath":["dyspnea","breathlessness","shortness_of_breath"],
+    "Wheezing":["wheezing","bronchospasm"],
+    "Rapid Breathing":["tachypnea","rapid_breathing","hyperventilation"],
+    "Chest Tightness":["chest_tightness","chest_constriction"],
+    "Phlegm":["phlegm","sputum","mucus_production","rusty_sputum"],
+    "Stridor":["stridor","noisy_breathing"],
+    "Sleep Apnea":["sleep_apnea","snoring","apnea","choking_at_night"],
+    "Chest Pain":["chest_pain","angina","cardiac_pain"],
+    "Palpitations":["palpitations","fast_heart_rate","heart_racing"],
+    "Irregular Heartbeat":["arrhythmia","irregular_heartbeat","skipped_beats"],
+    "Swollen Legs":["swollen_legs","pedal_edema","leg_swelling"],
+    "Swollen Ankles":["ankle_swelling","bilateral_leg_swelling","pitting_edema"],
+    "Cyanosis":["cyanosis","blue_lips","bluish_skin"],
+    "Leg Pain on Walking":["claudication","leg_cramps_on_walking"],
+    "Cold Extremities":["cold_hands_and_feets","cold_extremities","poor_circulation"],
+    "High Blood Pressure":["hypertension","high_bp","elevated_bp"],
+    "Low Blood Pressure":["hypotension","low_bp","postural_dizziness"],
+    "Nausea":["nausea","queasiness"],
+    "Vomiting":["vomiting","emesis","throwing_up"],
+    "Vomiting Blood":["hematemesis","vomiting_blood","blood_in_vomit"],
+    "Diarrhea":["diarrhoea","loose_stools","watery_stools"],
+    "Bloody Diarrhea":["bloody_diarrhea","dysentery","blood_in_stool"],
+    "Constipation":["constipation","hard_stools","straining"],
+    "Stomach Pain":["stomach_pain","abdominal_pain","belly_pain","epigastric_pain"],
+    "Lower Abdominal Pain":["lower_abdominal_pain","pelvic_pain","iliac_fossa_pain"],
+    "Acidity / Heartburn":["acidity","heartburn","acid_reflux","indigestion","gerd"],
+    "Bloating":["bloating","abdominal_distension","passage_of_gases"],
+    "Bloody Stool":["bloody_stool","melena","hematochezia","dark_tarry_stool"],
+    "Mucus in Stool":["mucus_in_stool","slimy_stool","rectal_mucus"],
+    "Rectal Bleeding":["rectal_bleeding","per_rectal_bleed","fresh_blood_stool"],
+    "Anal Pain":["anal_pain","anorectal_pain","perianal_pain"],
+    "Hiccups":["hiccups","persistent_hiccups"],
+    "Belching":["belching","eructation","burping"],
+    "Yellowing Skin":["jaundice","yellowish_skin","icterus"],
+    "Dark Urine":["dark_urine","cola_colored_urine","brown_urine"],
+    "Pale Stool":["pale_stool","clay_colored_stool","acholic_stool"],
+    "Right Upper Abdomen Pain":["right_upper_quadrant_pain","hepatic_pain","gallbladder_pain"],
+    "Frequent Urination":["polyuria","frequent_urination","nocturia"],
+    "Burning Urination":["dysuria","burning_urination","painful_urination","bladder_discomfort"],
+    "Blood in Urine":["hematuria","blood_in_urine","red_urine"],
+    "Reduced Urine Output":["oliguria","reduced_urine","anuria"],
+    "Frothy Urine":["frothy_urine","proteinuria","foamy_urine"],
+    "Urinary Incontinence":["urinary_incontinence","leaking_urine","stress_incontinence"],
+    "Difficulty Urinating":["urinary_retention","difficulty_urinating","weak_stream"],
+    "Flank Pain":["flank_pain","loin_pain","renal_colic"],
+    "Irregular Periods":["abnormal_menstruation","irregular_periods","menstrual_irregularity"],
+    "Heavy Periods":["menorrhagia","heavy_bleeding","heavy_periods"],
+    "Painful Periods":["dysmenorrhea","painful_periods","period_cramps"],
+    "Missed Periods":["amenorrhea","missed_period","no_periods"],
+    "Vaginal Discharge":["vaginal_discharge","abnormal_discharge","leucorrhea"],
+    "Pelvic Pain":["pelvic_pain","chronic_pelvic_pain","lower_pelvic_pain"],
+    "Breast Pain":["mastalgia","breast_pain","breast_tenderness"],
+    "Breast Lump":["breast_lump","breast_mass","breast_nodule"],
+    "Excessive Thirst":["polydipsia","excessive_thirst","increased_thirst"],
+    "Excessive Hunger":["polyphagia","excessive_hunger","increased_appetite"],
+    "Hot Flashes":["hot_flashes","flushing","menopause_symptoms"],
+    "Joint Pain":["joint_pain","arthralgia","polyarthralgia"],
+    "Joint Swelling":["joint_swelling","swelling_joints","synovitis"],
+    "Joint Stiffness":["morning_stiffness","joint_stiffness","movement_stiffness"],
+    "Muscle Pain":["myalgia","muscle_pain","muscle_aches"],
+    "Muscle Cramps":["muscle_cramps","leg_cramps","nocturnal_cramps"],
+    "Back Pain":["back_pain","low_back_pain","lumbago"],
+    "Neck Pain":["neck_pain","cervicalgia","cervical_pain"],
+    "Shoulder Pain":["shoulder_pain","periarthritis","rotator_cuff_pain"],
+    "Knee Pain":["knee_pain","gonalgia","patellar_pain"],
+    "Hip Pain":["hip_pain","hip_joint_pain","coxalgia"],
+    "Bone Pain":["bone_pain","ossalgia","skeletal_pain"],
+    "Painful Walking":["painful_walking","antalgic_gait","limping"],
+    "Muscle Wasting":["muscle_atrophy","muscle_wasting","sarcopenia"],
+    "Skin Rash":["skin_rash","erythema","maculopapular_rash"],
+    "Itching":["pruritus","itching","generalized_itching"],
+    "Blisters":["vesicles","blisters","bullae","pus_filled_pimples"],
+    "Skin Peeling":["desquamation","skin_peeling","exfoliation","silver_like_dusting"],
+    "Skin Discoloration":["hyperpigmentation","vitiligo","skin_discoloration","dischromic_patches"],
+    "Acne":["acne","pimples","blackheads","comedones","scurring"],
+    "Dry Skin":["xerosis","dry_skin","ichthyosis"],
+    "Hives":["urticaria","hives","wheals","welts"],
+    "Petechiae":["petechiae","purpura","bleeding_spots","red_spots_over_body"],
+    "Bruising":["bruising","ecchymosis","easy_bruising"],
+    "Wound Healing Issues":["poor_wound_healing","non_healing_ulcers","chronic_wounds"],
+    "Nail Changes":["nail_dystrophy","brittle_nails","pitted_nails","small_dents_in_nails","inflammatory_nails"],
+    "Hair Loss":["alopecia","hair_loss","thinning_hair"],
+    "Excessive Hair Growth":["hirsutism","excessive_hair_growth","hypertrichosis"],
+    "Nodules on Skin":["subcutaneous_nodules","skin_nodules","nodal_skin_eruptions"],
+    "Enlarged Thyroid":["goiter","enlarged_thyroid","thyroid_swelling"],
+    "Heat Intolerance":["heat_intolerance","feeling_hot"],
+    "Cold Intolerance":["cold_intolerance","feeling_cold"],
+    "Bleeding Tendency":["bleeding_tendency","coagulopathy","easy_bleeding"],
+    "Frequent Infections":["recurrent_infections","immunodeficiency","frequent_illness"],
+    "Enlarged Spleen":["splenomegaly","enlarged_spleen"],
+    "Enlarged Liver":["hepatomegaly","enlarged_liver"],
+    "Pallor / Anemia":["anemia","pallor","pale_conjunctiva"],
+    "Testicular Pain":["testicular_pain","scrotal_pain","orchialgia"],
+    "Testicular Swelling":["testicular_swelling","scrotal_swelling","hydrocele"],
+    "Erectile Dysfunction":["erectile_dysfunction","impotence","sexual_dysfunction"],
 }
 
-# Disease → symptom mapping for synthetic dataset generation
 DISEASE_SYMPTOM_MAP = {
-    "Flu (Influenza)": [
-        "high_fever","cough","headache","muscle_pain","fatigue","chills","shivering",
-        "sore_throat","runny_nose","loss_of_appetite"
-    ],
-    "COVID-19": [
-        "high_fever","cough","fatigue","loss_of_smell","breathlessness","headache",
-        "muscle_pain","chills","throat_irritation","body_aches"
-    ],
-    "Common Cold": [
-        "runny_nose","congestion","throat_irritation","mild_fever","cough","sneezing",
-        "headache","fatigue","watering_from_eyes"
-    ],
-    "Malaria": [
-        "high_fever","chills","shivering","headache","sweating","nausea","vomiting",
-        "muscle_pain","fatigue","malaise"
-    ],
-    "Dengue Fever": [
-        "high_fever","headache","joint_pain","muscle_pain","skin_rash","pain_behind_the_eyes",
-        "nausea","vomiting","fatigue","red_spots_over_body"
-    ],
-    "Typhoid": [
-        "high_fever","headache","stomach_pain","constipation","fatigue","loss_of_appetite",
-        "nausea","vomiting","abdominal_pain","toxic_look_(typhos)"
-    ],
-    "Pneumonia": [
-        "cough","high_fever","breathlessness","chest_pain","fatigue","chills",
-        "rusty_sputum","mucoid_sputum","fast_heart_rate","sweating"
-    ],
-    "Tuberculosis": [
-        "cough","blood_in_sputum","weight_loss","fatigue","high_fever","sweating",
-        "chest_pain","breathlessness","loss_of_appetite","malaise"
-    ],
-    "Diabetes": [
-        "polyuria","increased_appetite","weight_loss","fatigue","blurred_and_distorted_vision",
-        "drying_and_tingling_lips","irregular_sugar_level","excessive_hunger","weakness_in_limbs"
-    ],
-    "Hypertension": [
-        "headache","chest_pain","breathlessness","dizziness","palpitations","fast_heart_rate",
-        "fatigue","blurred_and_distorted_vision","sweating"
-    ],
-    "Gastroenteritis": [
-        "nausea","vomiting","diarrhoea","stomach_pain","high_fever","dehydration",
-        "loss_of_appetite","fatigue","abdominal_pain","chills"
-    ],
-    "Food Poisoning": [
-        "nausea","vomiting","diarrhoea","stomach_pain","mild_fever","fatigue",
-        "dehydration","loss_of_appetite","chills","sweating"
-    ],
-    "Migraine": [
-        "headache","nausea","vomiting","blurred_and_distorted_vision","fatigue",
-        "visual_disturbances","spinning_movements","loss_of_balance","sensitivity_to_light"
-    ],
-    "Asthma": [
-        "breathlessness","cough","chest_pain","fast_heart_rate","fatigue","anxiety",
-        "phlegm","restlessness","mucoid_sputum"
-    ],
-    "Bronchitis": [
-        "cough","phlegm","breathlessness","chest_pain","mild_fever","fatigue",
-        "throat_irritation","mucoid_sputum","sinus_pressure"
-    ],
-    "Sinusitis": [
-        "sinus_pressure","headache","runny_nose","congestion","throat_irritation",
-        "mild_fever","fatigue","redness_of_eyes","watering_from_eyes"
-    ],
-    "Urinary Tract Infection": [
-        "burning_micturition","foul_smell_of_urine","continuous_feel_of_urine",
-        "bladder_discomfort","mild_fever","fatigue","abdominal_pain","dark_urine"
-    ],
-    "Jaundice": [
-        "yellowish_skin","yellowing_of_eyes","dark_urine","fatigue","abdominal_pain",
-        "nausea","loss_of_appetite","itching","high_fever","vomiting"
-    ],
-    "Hepatitis B": [
-        "yellowish_skin","yellowing_of_eyes","dark_urine","fatigue","abdominal_pain",
-        "nausea","loss_of_appetite","joint_pain","vomiting","acute_liver_failure"
-    ],
-    "Hepatitis C": [
-        "fatigue","nausea","vomiting","dark_urine","abdominal_pain","yellowish_skin",
-        "loss_of_appetite","joint_pain","muscle_pain"
-    ],
-    "Chickenpox": [
-        "skin_rash","itching","high_fever","headache","fatigue","loss_of_appetite",
-        "blister","red_spots_over_body","chills","sweating"
-    ],
-    "Measles": [
-        "high_fever","skin_rash","runny_nose","cough","redness_of_eyes","headache",
-        "fatigue","loss_of_appetite","watering_from_eyes"
-    ],
-    "Psoriasis": [
-        "skin_rash","itching","skin_peeling","silver_like_dusting","small_dents_in_nails",
-        "inflammatory_nails","joint_pain","red_spots_over_body"
-    ],
-    "Fungal Infection": [
-        "itching","skin_rash","nodal_skin_eruptions","dischromic_patches","fatigue",
-        "yellow_crust_ooze","red_sore_around_nose","skin_peeling"
-    ],
-    "Allergy": [
-        "itching","runny_nose","redness_of_eyes","watering_from_eyes","sneezing",
-        "congestion","skin_rash","throat_irritation","breathlessness"
-    ],
-    "Arthritis": [
-        "joint_pain","swelling_joints","movement_stiffness","muscle_weakness",
-        "fatigue","back_pain","knee_pain","hip_joint_pain","painful_walking"
-    ],
-    "Hypothyroidism": [
-        "fatigue","weight_gain","cold_hands_and_feets","brittle_nails","enlarged_thyroid",
-        "mood_swings","constipation","depression","puffy_face_and_eyes","lethargy"
-    ],
-    "Hyperthyroidism": [
-        "weight_loss","fast_heart_rate","anxiety","sweating","palpitations","irritability",
-        "restlessness","increased_appetite","fatigue","breathlessness"
-    ],
-    "Anaemia": [
-        "fatigue","weakness_in_limbs","breathlessness","fast_heart_rate","cold_hands_and_feets",
-        "headache","dizziness","lethargy","muscle_weakness","pallor"
-    ],
-    "Heart Disease": [
-        "chest_pain","breathlessness","palpitations","fast_heart_rate","fatigue",
-        "sweating","nausea","dizziness","swollen_legs","weakness_in_limbs"
-    ],
-    "Kidney Disease": [
-        "fatigue","swelling","dark_urine","breathlessness","nausea","loss_of_appetite",
-        "muscle_weakness","frequent_urination","back_pain","headache"
-    ],
-    "Appendicitis": [
-        "abdominal_pain","nausea","vomiting","high_fever","loss_of_appetite",
-        "constipation","fatigue","chills","sweating"
-    ],
-    "Peptic Ulcer": [
-        "stomach_pain","acidity","nausea","vomiting","loss_of_appetite","bloody_stool",
-        "burning_micturition","fatigue","weight_loss"
-    ],
-    "Dengue Hemorrhagic Fever": [
-        "high_fever","skin_rash","red_spots_over_body","bloody_stool","joint_pain",
-        "muscle_pain","nausea","vomiting","fatigue","bleeding"
-    ],
-    "Meningitis": [
-        "stiff_neck","high_fever","headache","nausea","vomiting","altered_sensorium",
-        "loss_of_balance","spinning_movements","redness_of_eyes","chills"
-    ],
-    "Stroke": [
-        "weakness_of_one_body_side","slurred_speech","loss_of_balance","unsteadiness",
-        "headache","blurred_and_distorted_vision","nausea","altered_sensorium"
-    ],
-    "Acne": [
-        "pus_filled_pimples","blackheads","scurring","skin_rash","itching","redness",
-        "skin_peeling","nodal_skin_eruptions"
-    ],
-    "Varicose Veins": [
-        "swollen_blood_vessels","prominent_veins_on_calf","swelling","painful_walking",
-        "fatigue","muscle_pain","swollen_legs","bruising"
-    ],
-    "Hypoglycemia": [
-        "anxiety","restlessness","sweating","palpitations","fatigue","headache",
-        "blurred_and_distorted_vision","irritability","weakness_in_limbs"
-    ],
-    "Panic Disorder": [
-        "anxiety","palpitations","chest_pain","breathlessness","sweating","chills",
-        "dizziness","fatigue","restlessness","fast_heart_rate"
-    ],
-    "Depression": [
-        "depression","fatigue","loss_of_appetite","weight_loss","mood_swings",
-        "irritability","lack_of_concentration","lethargy","restlessness","sleep_problems"
-    ],
-    "Vitamin D Deficiency": [
-        "bone_pain","muscle_weakness","fatigue","depression","back_pain",
-        "impaired_wound_healing","hair_loss","body_aches","lethargy"
-    ],
+    # INFECTIOUS
+    "Influenza (Flu)":["high_fever","cough","headache","myalgia","fatigue","chills","shivering","throat_irritation","runny_nose","loss_of_appetite","sweating","malaise"],
+    "COVID-19":["high_fever","cough","fatigue","anosmia","dyspnea","headache","myalgia","chills","throat_irritation","loss_of_appetite","loss_of_taste"],
+    "COVID-19 Long Haul":["fatigue","brain_fog","dyspnea","myalgia","joint_pain","sleep_disturbance","palpitations","low_grade_fever"],
+    "Common Cold":["runny_nose","congestion","throat_irritation","mild_fever","cough","sneezing","headache","fatigue","watering_from_eyes","sinus_pressure"],
+    "Malaria":["high_fever","chills","shivering","headache","sweating","nausea","vomiting","myalgia","fatigue","malaise","joint_pain","rigors"],
+    "Cerebral Malaria":["high_fever","seizures","altered_sensorium","headache","vomiting","chills","anemia"],
+    "Dengue Fever":["high_fever","headache","joint_pain","myalgia","skin_rash","pain_behind_the_eyes","nausea","vomiting","fatigue","red_spots_over_body"],
+    "Dengue Hemorrhagic Fever":["high_fever","skin_rash","red_spots_over_body","bloody_stool","joint_pain","myalgia","nausea","vomiting","petechiae"],
+    "Dengue Shock Syndrome":["high_fever","hypotension","skin_rash","petechiae","bleeding_tendency","fatigue","vomiting"],
+    "Typhoid Fever":["high_fever","headache","stomach_pain","constipation","fatigue","loss_of_appetite","nausea","vomiting","abdominal_pain","sweating"],
+    "Paratyphoid":["mild_fever","headache","stomach_pain","diarrhoea","fatigue","nausea","malaise"],
+    "Chikungunya":["high_fever","joint_pain","myalgia","skin_rash","headache","fatigue","redness_of_eyes","nausea","swelling_joints","chills"],
+    "Zika Virus":["mild_fever","skin_rash","joint_pain","redness_of_eyes","headache","myalgia","fatigue"],
+    "Chickenpox":["skin_rash","pruritus","high_fever","headache","fatigue","loss_of_appetite","vesicles","red_spots_over_body","chills"],
+    "Shingles (Herpes Zoster)":["vesicles","skin_rash","pruritus","fever","fatigue","headache","neuralgia","burning_pain"],
+    "Measles":["high_fever","cough","runny_nose","redness_of_eyes","skin_rash","photophobia","malaise"],
+    "Mumps":["parotid_swelling","fever","headache","muscle_pain","fatigue","jaw_pain","loss_of_appetite"],
+    "Rubella":["mild_fever","skin_rash","swelled_lymph_nodes","joint_pain","headache","runny_nose"],
+    "Whooping Cough":["severe_cough","wheezing","vomiting","cyanosis","mild_fever","runny_nose"],
+    "Diphtheria":["sore_throat","swollen_tonsils","fever","hoarseness","difficulty_swallowing","fatigue"],
+    "Tetanus":["muscle_rigidity","trismus","dysphagia","neck_stiffness","fever","spasms"],
+    "Rabies":["hydrophobia","fever","behavioral_changes","hallucinations","seizures","paralysis"],
+    "Leptospirosis":["high_fever","headache","myalgia","redness_of_eyes","skin_rash","nausea","vomiting","jaundice"],
+    "Scrub Typhus":["high_fever","headache","myalgia","skin_rash","swelled_lymph_nodes","redness_of_eyes"],
+    "Rickettsial Fever":["high_fever","headache","skin_rash","myalgia","swelled_lymph_nodes"],
+    "Brucellosis":["undulant_fever","fatigue","sweating","joint_pain","headache","back_pain","loss_of_appetite"],
+    "Meningitis (Bacterial)":["high_fever","neck_stiffness","headache","photophobia","vomiting","seizures","altered_sensorium","petechiae"],
+    "Meningitis (Viral)":["fever","neck_stiffness","headache","photophobia","nausea","vomiting","fatigue"],
+    "Meningitis (Fungal)":["fever","neck_stiffness","headache","confusion","fatigue","visual_disturbances"],
+    "Encephalitis":["high_fever","headache","altered_sensorium","seizures","behavioral_changes","vomiting","neck_stiffness"],
+    "Brain Abscess":["headache","fever","vomiting","seizures","altered_sensorium"],
+    "Poliomyelitis":["fever","neck_stiffness","myalgia","paralysis","muscle_weakness","headache"],
+    "Viral Hepatitis A":["jaundice","dark_urine","fatigue","nausea","vomiting","abdominal_pain","loss_of_appetite","low_grade_fever"],
+    "Viral Hepatitis B":["jaundice","dark_urine","fatigue","nausea","abdominal_pain","joint_pain","skin_rash","loss_of_appetite"],
+    "Viral Hepatitis C":["fatigue","jaundice","dark_urine","abdominal_pain","nausea","joint_pain","muscle_pain"],
+    "Viral Hepatitis E":["jaundice","dark_urine","nausea","vomiting","abdominal_pain","fatigue","loss_of_appetite"],
+    "HIV/AIDS":["fatigue","weight_loss","recurrent_infections","swelled_lymph_nodes","fever","diarrhoea","skin_rash","oral_ulcers"],
+    "Tuberculosis (Pulmonary)":["cough","blood_in_sputum","low_grade_fever","night_sweats","weight_loss","fatigue","chest_pain","loss_of_appetite"],
+    "Tuberculosis (Extrapulmonary)":["fever","night_sweats","weight_loss","fatigue","swelled_lymph_nodes","back_pain","abdominal_pain"],
+    "Miliary Tuberculosis":["high_fever","fatigue","weight_loss","night_sweats","dyspnea","cough","anemia"],
+    "Leprosy":["skin_lesions","numbness","peripheral_neuropathy","skin_thickening","hypopigmented_patches"],
+    "Filariasis":["leg_swelling","scrotal_swelling","fever","lymphedema","recurrent_fever"],
+    "Kala-azar (Leishmaniasis)":["prolonged_fever","splenomegaly","weight_loss","anemia","skin_darkening","fatigue"],
+    "Amoebiasis":["bloody_diarrhea","abdominal_pain","fever","nausea","vomiting","mucus_in_stool"],
+    "Giardiasis":["watery_diarrhea","bloating","abdominal_cramps","flatulence","nausea","fatigue"],
+    "Cholera":["watery_diarrhea","vomiting","dehydration","muscle_cramps","fatigue"],
+    "Food Poisoning":["nausea","vomiting","diarrhoea","abdominal_pain","fever","weakness"],
+    "Salmonellosis":["fever","diarrhoea","abdominal_cramps","nausea","vomiting","headache"],
+    "Shigellosis":["bloody_diarrhea","abdominal_cramps","fever","tenesmus","nausea","vomiting"],
+    "E. coli Infection":["diarrhoea","abdominal_cramps","nausea","vomiting","fever","bloody_stool"],
+    "Norovirus Gastroenteritis":["vomiting","diarrhoea","nausea","abdominal_cramps","low_grade_fever"],
+    "Rotavirus Gastroenteritis":["watery_diarrhea","vomiting","fever","abdominal_pain","dehydration"],
+    "Hand Foot Mouth Disease":["mouth_ulcers","skin_rash","mild_fever","loss_of_appetite","sore_throat","vesicles"],
+    "Infectious Mononucleosis":["fever","sore_throat","swelled_lymph_nodes","fatigue","splenomegaly","skin_rash"],
+    "Herpes Simplex (Oral)":["cold_sores","mouth_ulcers","fever","sore_throat","swelled_lymph_nodes"],
+    "Gonorrhea":["dysuria","urethral_discharge","pelvic_pain","vaginal_discharge","fever"],
+    "Chlamydia":["dysuria","vaginal_discharge","pelvic_pain","testicular_pain","urethral_discharge"],
+    "Syphilis":["painless_ulcer","skin_rash","swelled_lymph_nodes","fever","myalgia","alopecia"],
+    "Candidiasis (Vaginal)":["vaginal_discharge","pruritus","dysuria","vulvar_redness","burning_sensation"],
+    "Candidiasis (Oral)":["white_patches_mouth","sore_throat","dysphagia","loss_of_taste"],
+    "Aspergillosis":["cough","dyspnea","fever","hemoptysis","chest_pain"],
+    "Hookworm Infection":["anemia","abdominal_pain","diarrhoea","fatigue"],
+    "Roundworm (Ascariasis)":["abdominal_pain","nausea","cough","dyspnea"],
+    "Tapeworm Infection":["abdominal_pain","nausea","weight_loss","anal_pruritus","diarrhoea"],
+    "Pinworm Infection":["anal_pruritus","disturbed_sleep","abdominal_pain","nausea"],
+    "Toxoplasmosis":["fever","headache","myalgia","swelled_lymph_nodes","fatigue"],
+    "Yellow Fever":["high_fever","jaundice","vomiting","myalgia","headache","bleeding"],
+    "West Nile Virus":["fever","headache","myalgia","skin_rash","fatigue","swelled_lymph_nodes"],
+    "Influenza A (H1N1)":["high_fever","cough","sore_throat","myalgia","headache","fatigue","vomiting"],
+    # RESPIRATORY
+    "Asthma":["wheezing","dyspnea","chest_tightness","cough","breathlessness"],
+    "COPD":["chronic_cough","dyspnea","phlegm","weight_loss","fatigue"],
+    "Chronic Bronchitis":["chronic_cough","phlegm","dyspnea","wheeze","fatigue"],
+    "Emphysema":["dyspnea","weight_loss","cough","fatigue","cyanosis"],
+    "Pneumonia (Bacterial)":["high_fever","cough","dyspnea","chest_pain","rusty_sputum","chills","fatigue"],
+    "Pneumonia (Viral)":["fever","cough","dyspnea","myalgia","fatigue","headache","chest_pain"],
+    "Atypical Pneumonia":["low_grade_fever","dry_cough","fatigue","headache","myalgia","dyspnea"],
+    "Lung Abscess":["high_fever","productive_cough","chest_pain","hemoptysis","night_sweats","weight_loss"],
+    "Pleural Effusion":["dyspnea","chest_pain","dry_cough","fever","fatigue"],
+    "Pleuritis":["sharp_chest_pain","dyspnea","dry_cough","fever"],
+    "Pneumothorax":["sudden_chest_pain","dyspnea","tachypnea","cyanosis"],
+    "Pulmonary Embolism":["sudden_dyspnea","chest_pain","hemoptysis","tachycardia","leg_swelling","syncope"],
+    "Pulmonary Hypertension":["dyspnea","fatigue","chest_pain","syncope","palpitations","pedal_edema"],
+    "Bronchiectasis":["chronic_cough","large_amount_sputum","hemoptysis","dyspnea","recurrent_fever"],
+    "Cystic Fibrosis":["chronic_cough","thick_mucus","recurrent_pulmonary_infections","malabsorption"],
+    "Interstitial Lung Disease":["dyspnea","dry_cough","fatigue","weight_loss"],
+    "Sarcoidosis":["dyspnea","dry_cough","fatigue","chest_pain","swelled_lymph_nodes"],
+    "Bronchiolitis":["wheezing","cough","mild_fever","dyspnea","tachypnea"],
+    "Laryngitis":["hoarseness","sore_throat","dry_cough","mild_fever"],
+    "Epiglottitis":["sore_throat","dysphagia","drooling","fever","stridor"],
+    "Obstructive Sleep Apnea":["snoring","daytime_sleepiness","morning_headache","apnea","poor_concentration"],
+    # CARDIOVASCULAR
+    "Coronary Artery Disease":["chest_pain","dyspnea","fatigue","palpitations","sweating","nausea"],
+    "Acute MI (Heart Attack)":["severe_chest_pain","dyspnea","sweating","nausea","arm_pain","jaw_pain","vomiting"],
+    "Unstable Angina":["chest_pain","dyspnea","sweating","nausea"],
+    "Heart Failure":["dyspnea","pedal_edema","fatigue","orthopnea","cough","weight_gain"],
+    "Dilated Cardiomyopathy":["dyspnea","fatigue","pedal_edema","palpitations","chest_pain"],
+    "Hypertrophic Cardiomyopathy":["dyspnea","syncope","chest_pain","palpitations","fatigue"],
+    "Pericarditis":["sharp_chest_pain","fever","dyspnea","cough"],
+    "Myocarditis":["chest_pain","dyspnea","fatigue","palpitations","fever"],
+    "Endocarditis":["fever","chills","fatigue","sweating","joint_pain","petechiae"],
+    "Atrial Fibrillation":["palpitations","irregular_heartbeat","dyspnea","fatigue","chest_pain","syncope"],
+    "Deep Vein Thrombosis":["leg_swelling","leg_pain","warmth","redness","tenderness"],
+    "Peripheral Artery Disease":["claudication","leg_pain","cold_extremities","skin_discoloration"],
+    "Aortic Stenosis":["chest_pain","syncope","dyspnea","fatigue"],
+    "Mitral Regurgitation":["dyspnea","fatigue","palpitations","chest_pain","pedal_edema"],
+    "Aortic Aneurysm":["back_pain","abdominal_pain","pulsatile_mass","hypotension"],
+    "Raynaud Phenomenon":["cold_extremities","color_change_fingers","numbness","pain"],
+    "Vasculitis":["fever","skin_rash","myalgia","fatigue","weight_loss","joint_pain"],
+    "Hypertensive Crisis":["severe_headache","blurred_vision","chest_pain","dyspnea","altered_sensorium"],
+    "Cardiac Tamponade":["dyspnea","chest_pain","hypotension","tachycardia"],
+    "Rheumatic Heart Disease":["dyspnea","chest_pain","palpitations","fatigue","joint_pain","fever"],
+    # GASTROINTESTINAL
+    "GERD":["heartburn","acid_reflux","regurgitation","chest_pain","dysphagia","chronic_cough"],
+    "Peptic Ulcer Disease":["epigastric_pain","nausea","vomiting","heartburn","melena","loss_of_appetite"],
+    "Gastritis":["epigastric_pain","nausea","vomiting","bloating","loss_of_appetite","heartburn"],
+    "H. pylori Infection":["epigastric_pain","nausea","bloating","belching","melena","loss_of_appetite"],
+    "Irritable Bowel Syndrome":["abdominal_pain","bloating","alternating_diarrhea_constipation","mucus_in_stool","flatulence"],
+    "Crohn's Disease":["abdominal_pain","diarrhoea","weight_loss","fatigue","fever","bloody_stool"],
+    "Ulcerative Colitis":["bloody_diarrhea","abdominal_cramps","tenesmus","fatigue","weight_loss","fever"],
+    "Celiac Disease":["diarrhoea","bloating","weight_loss","fatigue","anemia"],
+    "Appendicitis":["right_lower_abdominal_pain","nausea","vomiting","fever","anorexia"],
+    "Cholecystitis":["right_upper_quadrant_pain","fever","nausea","vomiting","jaundice"],
+    "Cholelithiasis (Gallstones)":["right_upper_quadrant_pain","nausea","vomiting","bloating"],
+    "Pancreatitis (Acute)":["severe_epigastric_pain","nausea","vomiting","fever","abdominal_distension"],
+    "Pancreatitis (Chronic)":["epigastric_pain","weight_loss","nausea","malabsorption"],
+    "Hepatic Cirrhosis":["jaundice","ascites","splenomegaly","fatigue","weight_loss","bleeding_tendency","confusion"],
+    "Fatty Liver (NAFLD)":["fatigue","right_upper_quadrant_pain","hepatomegaly","weight_gain"],
+    "Alcoholic Hepatitis":["jaundice","fever","right_upper_quadrant_pain","nausea","vomiting","ascites"],
+    "Liver Failure":["jaundice","confusion","ascites","bleeding","fatigue","altered_sensorium"],
+    "Bowel Obstruction":["abdominal_pain","vomiting","constipation","abdominal_distension"],
+    "Hernia (Inguinal)":["groin_pain","groin_bulge","discomfort","nausea"],
+    "Hemorrhoids":["rectal_bleeding","anal_pain","pruritus","prolapse"],
+    "Anal Fissure":["anal_pain","rectal_bleeding","constipation"],
+    "Diverticulitis":["left_lower_quadrant_pain","fever","nausea","constipation","rectal_bleeding"],
+    "Colon Polyps":["rectal_bleeding","change_in_bowel_habit","abdominal_pain","mucus_in_stool"],
+    "Intussusception":["severe_abdominal_pain","vomiting","bloody_stool","abdominal_mass"],
+    "Gastroparesis":["nausea","vomiting","bloating","early_satiety","abdominal_pain"],
+    "Achalasia":["dysphagia","regurgitation","chest_pain","weight_loss","cough"],
+    "Esophageal Varices":["hematemesis","melena","jaundice","ascites","fatigue"],
+    # KIDNEY / URINARY
+    "Urinary Tract Infection":["dysuria","frequent_urination","suprapubic_pain","cloudy_urine","hematuria","urgency"],
+    "Pyelonephritis":["fever","flank_pain","dysuria","nausea","vomiting"],
+    "Kidney Stones":["renal_colic","hematuria","nausea","vomiting","dysuria","flank_pain"],
+    "Chronic Kidney Disease":["fatigue","anemia","edema","hypertension","oliguria","nausea","pruritus"],
+    "Acute Kidney Injury":["oliguria","edema","confusion","nausea","vomiting","hypertension","fatigue"],
+    "Nephrotic Syndrome":["proteinuria","edema","fatigue"],
+    "Nephritic Syndrome":["hematuria","hypertension","oliguria","proteinuria","edema"],
+    "Glomerulonephritis":["hematuria","proteinuria","edema","hypertension","fatigue"],
+    "Polycystic Kidney Disease":["flank_pain","hematuria","hypertension","urinary_tract_infection"],
+    "Renal Cell Carcinoma":["hematuria","flank_pain","abdominal_mass","weight_loss","fever","fatigue"],
+    "Bladder Cancer":["hematuria","dysuria","frequent_urination","pelvic_pain","back_pain"],
+    "Prostate Cancer":["urinary_frequency","weak_stream","hematuria","pelvic_pain","back_pain"],
+    "Benign Prostatic Hyperplasia":["urinary_frequency","weak_stream","nocturia","straining"],
+    "Prostatitis":["pelvic_pain","dysuria","frequency","fever","chills"],
+    "Interstitial Cystitis":["pelvic_pain","urinary_urgency","frequency","dyspareunia","nocturia"],
+    # ENDOCRINE
+    "Type 1 Diabetes":["polyuria","polydipsia","polyphagia","weight_loss","fatigue","blurred_vision"],
+    "Type 2 Diabetes":["polyuria","polydipsia","fatigue","blurred_vision","slow_healing","recurrent_infections","numbness"],
+    "Diabetic Ketoacidosis":["polyuria","vomiting","abdominal_pain","altered_sensorium","fruity_breath"],
+    "Hypoglycemia":["sweating","trembling","palpitations","confusion","headache","hunger","pallor"],
+    "Hypothyroidism":["fatigue","weight_gain","cold_intolerance","constipation","dry_skin","hair_loss","depression"],
+    "Hyperthyroidism":["weight_loss","heat_intolerance","palpitations","tremors","anxiety","diarrhea","goiter"],
+    "Thyroid Nodule":["neck_swelling","dysphagia","hoarseness","dyspnea"],
+    "Thyroid Cancer":["neck_mass","hoarseness","dysphagia","neck_pain","cough"],
+    "Addison Disease":["fatigue","weight_loss","hypotension","hyperpigmentation","nausea","vomiting"],
+    "Cushing Syndrome":["weight_gain","hypertension","moon_face","purple_striae","diabetes","osteoporosis"],
+    "Acromegaly":["enlargement_of_hands_feet","coarse_facial_features","headache","visual_disturbances","joint_pain"],
+    "Pituitary Adenoma":["headache","visual_disturbances","galactorrhea","amenorrhea"],
+    "Hyperparathyroidism":["kidney_stones","bone_pain","fatigue","abdominal_pain","confusion","polyuria"],
+    "Hypoparathyroidism":["muscle_cramps","numbness","seizures","fatigue","dry_skin"],
+    "PCOS":["irregular_periods","hirsutism","acne","weight_gain","infertility","pelvic_pain"],
+    "Metabolic Syndrome":["abdominal_obesity","hypertension","hyperglycemia","fatigue"],
+    "Vitamin D Deficiency":["bone_pain","fatigue","muscle_weakness","depression","hair_loss"],
+    "Vitamin B12 Deficiency":["fatigue","numbness","anemia","memory_loss","depression"],
+    "Iron Deficiency Anaemia":["fatigue","pallor","dyspnea","palpitations","brittle_nails","hair_loss"],
+    "Megaloblastic Anaemia":["fatigue","pallor","numbness","jaundice","weight_loss"],
+    "Vitamin C Deficiency":["bleeding_gums","easy_bruising","joint_pain","poor_wound_healing","fatigue"],
+    "Zinc Deficiency":["poor_wound_healing","hair_loss","diarrhoea","recurrent_infections"],
+    # NEUROLOGICAL
+    "Stroke (Ischemic)":["sudden_weakness","facial_droop","slurred_speech","vision_loss","severe_headache","confusion"],
+    "Stroke (Hemorrhagic)":["sudden_severe_headache","vomiting","altered_sensorium","weakness","seizures"],
+    "TIA":["transient_weakness","slurred_speech","vision_loss","dizziness","confusion"],
+    "Epilepsy":["seizures","convulsions","loss_of_consciousness","post_ictal_confusion"],
+    "Parkinson Disease":["resting_tremor","bradykinesia","rigidity","postural_instability"],
+    "Alzheimer Disease":["memory_loss","confusion","personality_changes","disorientation"],
+    "Vascular Dementia":["memory_loss","confusion","personality_changes"],
+    "Multiple Sclerosis":["numbness","weakness","visual_disturbances","fatigue","bladder_dysfunction"],
+    "Guillain-Barre Syndrome":["ascending_weakness","paresthesia","dysphagia","facial_weakness"],
+    "Myasthenia Gravis":["ptosis","diplopia","fatigable_weakness","dysphagia"],
+    "Motor Neuron Disease":["progressive_weakness","muscle_wasting","dysphagia","dysarthria"],
+    "Peripheral Neuropathy":["numbness","tingling","burning_pain","weakness"],
+    "Carpal Tunnel Syndrome":["numbness","tingling_hand","wrist_pain","weakness_grip"],
+    "Trigeminal Neuralgia":["severe_facial_pain","electric_shock_pain"],
+    "Bell Palsy":["facial_weakness","inability_to_close_eye","taste_disturbance"],
+    "Cervical Spondylosis":["neck_pain","radiculopathy","numbness","weakness","headache"],
+    "Lumbar Spondylosis":["low_back_pain","sciatica","numbness","weakness"],
+    "Herniated Disc":["back_pain","sciatica","numbness","weakness"],
+    "Sciatica":["radiating_leg_pain","back_pain","numbness","tingling","weakness"],
+    "Migraine":["severe_headache","nausea","vomiting","photophobia","phonophobia"],
+    "Cluster Headache":["severe_unilateral_headache","tearing","rhinorrhea","ptosis"],
+    "Tension Headache":["bilateral_headache","pressure_sensation","neck_stiffness","fatigue"],
+    "Hydrocephalus":["headache","vomiting","visual_disturbances","gait_disturbance"],
+    "Vertigo (BPPV)":["sudden_vertigo","nausea","balance_problems"],
+    "Meniere Disease":["episodic_vertigo","tinnitus","hearing_loss","ear_fullness"],
+    # PSYCHIATRIC
+    "Major Depression":["depressed_mood","anhedonia","fatigue","sleep_problems","concentration_problems"],
+    "Bipolar Disorder":["manic_episodes","depressive_episodes","mood_swings","impulsivity"],
+    "Schizophrenia":["hallucinations","delusions","disorganized_thinking","flat_affect","social_withdrawal"],
+    "Generalized Anxiety Disorder":["excessive_worry","restlessness","fatigue","concentration_problems","muscle_tension","sleep_problems"],
+    "Panic Disorder":["panic_attacks","palpitations","sweating","trembling","shortness_of_breath"],
+    "OCD":["obsessive_thoughts","compulsive_behaviors","anxiety","repetitive_actions"],
+    "PTSD":["flashbacks","nightmares","hypervigilance","avoidance","insomnia"],
+    "ADHD":["inattention","hyperactivity","impulsivity","poor_concentration","forgetfulness"],
+    "Anorexia Nervosa":["severe_weight_loss","food_restriction","amenorrhea","fatigue"],
+    "Bulimia Nervosa":["binge_eating","purging","weight_fluctuation","dental_erosion"],
+    "Insomnia Disorder":["difficulty_falling_asleep","early_waking","daytime_fatigue","poor_concentration"],
+    "Narcolepsy":["daytime_sleepiness","cataplexy","sleep_paralysis","hallucinations"],
+    # MUSCULOSKELETAL
+    "Rheumatoid Arthritis":["joint_pain","morning_stiffness","swelling_joints","fatigue"],
+    "Osteoarthritis":["joint_pain","crepitus","morning_stiffness","joint_deformity","reduced_range_of_motion"],
+    "Gout":["sudden_joint_pain","swelling","redness","warmth","hyperuricemia"],
+    "Ankylosing Spondylitis":["back_pain","morning_stiffness","kyphosis","sacroiliac_pain"],
+    "Psoriatic Arthritis":["joint_pain","skin_rash","nail_changes","dactylitis"],
+    "Reactive Arthritis":["joint_pain","urethritis","conjunctivitis","skin_lesions"],
+    "Systemic Lupus":["butterfly_rash","joint_pain","fatigue","fever","photosensitivity"],
+    "Sjogren Syndrome":["dry_eyes","dry_mouth","joint_pain","fatigue"],
+    "Dermatomyositis":["proximal_muscle_weakness","heliotrope_rash","dysphagia","fatigue"],
+    "Polymyositis":["proximal_muscle_weakness","myalgia","fatigue","dysphagia"],
+    "Polymyalgia Rheumatica":["shoulder_pain","hip_pain","morning_stiffness","fatigue","fever"],
+    "Giant Cell Arteritis":["temporal_headache","jaw_claudication","visual_loss","fever","scalp_tenderness"],
+    "Fibromyalgia":["widespread_pain","tender_points","fatigue","sleep_problems"],
+    "Scleroderma":["skin_thickening","Raynaud_phenomenon","dysphagia","fatigue"],
+    "Osteoporosis":["back_pain","fractures","height_loss","kyphosis"],
+    "Osteomyelitis":["bone_pain","fever","local_swelling","redness"],
+    "Septic Arthritis":["acute_joint_pain","swelling","fever","redness","warm_joint"],
+    "Bursitis":["local_pain","swelling","tenderness","limited_motion"],
+    "Tendinitis":["pain_at_tendon","swelling","warmth","reduced_movement"],
+    "Plantar Fasciitis":["heel_pain","morning_stiffness","pain_on_standing","tenderness"],
+    "Frozen Shoulder":["shoulder_pain","severely_limited_motion","night_pain"],
+    "Rotator Cuff Tear":["shoulder_pain","weakness","restricted_abduction"],
+    "Tennis Elbow":["lateral_elbow_pain","tenderness","pain_on_gripping","weakness"],
+    "Achilles Tendinopathy":["posterior_heel_pain","morning_stiffness","swelling","tenderness"],
+    "Spondylolisthesis":["back_pain","sciatica","muscle_tightness","buttock_pain"],
+    "Spinal Stenosis":["back_pain","neurogenic_claudication","numbness","weakness"],
+    # SKIN
+    "Psoriasis":["silver_like_dusting","skin_rash","pruritus","skin_thickening","nail_changes"],
+    "Atopic Dermatitis":["pruritus","dry_skin","erythema","vesicles","skin_thickening"],
+    "Contact Dermatitis":["pruritus","erythema","vesicles","skin_rash","burning_sensation"],
+    "Seborrheic Dermatitis":["scaly_skin","erythema","dandruff","pruritus","oily_skin"],
+    "Rosacea":["facial_redness","telangiectasia","acne","skin_sensitivity"],
+    "Acne Vulgaris":["pimples","blackheads","whiteheads","nodules","oily_skin"],
+    "Urticaria":["wheals","pruritus","erythema","burning_sensation"],
+    "Angioedema":["swelling_of_face","swelling_of_lips","dysphagia","dyspnea"],
+    "Vitiligo":["depigmented_patches","white_skin","hair_depigmentation"],
+    "Melasma":["brown_patches","facial_hyperpigmentation"],
+    "Fungal Skin Infection":["pruritus","erythema","scaling","vesicles","ring_shaped_rash"],
+    "Ringworm":["ring_shaped_rash","pruritus","scaling","erythema"],
+    "Athlete Foot":["pruritus","scaling","vesicles","erythema_between_toes"],
+    "Tinea Versicolor":["hypopigmented_patches","pruritus","scaling"],
+    "Onychomycosis":["nail_thickening","nail_discoloration","brittle_nails"],
+    "Scabies":["nocturnal_pruritus","burrows","skin_rash","interdigital_rash"],
+    "Impetigo":["honey_colored_crusts","vesicles","erythema","pruritus","fever"],
+    "Cellulitis":["erythema","swelling","warmth","tenderness","fever"],
+    "Erysipelas":["well_demarcated_erythema","fever","chills","swelling","tenderness"],
+    "Abscess":["fluctuant_swelling","erythema","tenderness","fever"],
+    "Hidradenitis Suppurativa":["painful_nodules","abscesses","sinus_tracts","scarring"],
+    "Pemphigus Vulgaris":["bullae","oral_ulcers","skin_erosions","pain"],
+    "Lichen Planus":["purple_papules","pruritus","oral_lesions"],
+    "Pityriasis Rosea":["herald_patch","widespread_rash","pruritus"],
+    "Erythema Multiforme":["target_lesions","skin_rash","fever"],
+    "Stevens-Johnson Syndrome":["severe_skin_rash","bullae","fever","conjunctivitis"],
+    "Drug Reaction":["skin_rash","pruritus","urticaria","fever","angioedema"],
+    # CANCERS
+    "Lung Cancer":["persistent_cough","hemoptysis","dyspnea","chest_pain","weight_loss","fatigue"],
+    "Breast Cancer":["breast_lump","nipple_discharge","breast_pain","lymphadenopathy"],
+    "Colorectal Cancer":["rectal_bleeding","change_in_bowel_habit","abdominal_pain","weight_loss","anemia"],
+    "Cervical Cancer":["abnormal_vaginal_bleeding","pelvic_pain","vaginal_discharge","back_pain"],
+    "Ovarian Cancer":["abdominal_bloating","pelvic_pain","urinary_frequency","weight_loss","fatigue"],
+    "Uterine Cancer":["abnormal_uterine_bleeding","pelvic_pain","vaginal_discharge","weight_loss"],
+    "Stomach Cancer":["epigastric_pain","weight_loss","dysphagia","nausea","vomiting","hematemesis"],
+    "Liver Cancer":["right_upper_quadrant_pain","jaundice","weight_loss","ascites","fatigue"],
+    "Pancreatic Cancer":["epigastric_pain","jaundice","weight_loss","back_pain","nausea"],
+    "Kidney Cancer":["hematuria","flank_pain","abdominal_mass","weight_loss","fever"],
+    "Lymphoma (Hodgkin)":["painless_lymphadenopathy","fever","night_sweats","weight_loss","pruritus"],
+    "Lymphoma (Non-Hodgkin)":["lymphadenopathy","fever","night_sweats","weight_loss","fatigue"],
+    "Leukemia (ALL)":["fatigue","pallor","bleeding","fever","bone_pain","lymphadenopathy"],
+    "Leukemia (CML)":["fatigue","weight_loss","splenomegaly","night_sweats","fever"],
+    "Multiple Myeloma":["bone_pain","fatigue","anemia","recurrent_infections","renal_failure"],
+    "Melanoma":["changing_mole","ulcerated_lesion","pruritus","bleeding_lesion"],
+    "Basal Cell Carcinoma":["pearly_papule","ulcerated_lesion","telangiectasia"],
+    "Squamous Cell Carcinoma":["keratotic_ulcer","erythematous_plaque","bleeding","non_healing_wound"],
+    "Brain Tumor":["headache","seizures","vomiting","focal_neurological_deficits"],
+    "Oral Cancer":["oral_ulcer","white_patch","red_patch","dysphagia","neck_mass"],
+    "Esophageal Cancer":["dysphagia","weight_loss","chest_pain","vomiting","hoarseness"],
+    "Testicular Cancer":["testicular_mass","painless_swelling","heaviness","back_pain"],
+    # EYE
+    "Conjunctivitis (Bacterial)":["redness_of_eyes","purulent_discharge","pruritus","eyelid_swelling"],
+    "Conjunctivitis (Viral)":["redness_of_eyes","watery_discharge","pruritus","photophobia"],
+    "Allergic Conjunctivitis":["pruritus","redness_of_eyes","watery_discharge"],
+    "Glaucoma":["gradual_vision_loss","peripheral_vision_loss","headache","nausea","halos"],
+    "Cataract":["blurred_vision","glare","double_vision"],
+    "Macular Degeneration":["central_vision_loss","blurred_vision","dark_spots"],
+    "Diabetic Retinopathy":["blurred_vision","floaters","vision_loss"],
+    "Retinal Detachment":["flashes_of_light","floaters","curtain_vision_loss"],
+    "Uveitis":["eye_pain","redness","photophobia","blurred_vision"],
+    "Dry Eye Syndrome":["dry_eyes","burning_sensation","foreign_body_sensation","watery_eyes"],
+    "Blepharitis":["eyelid_redness","crusting","pruritus","burning_sensation"],
+    "Stye (Hordeolum)":["eyelid_pain","swelling","redness","tender_lump"],
+    # ENT
+    "Otitis Media":["ear_pain","fever","hearing_loss","vomiting"],
+    "Otitis Externa":["ear_pain","pruritus","discharge","hearing_loss"],
+    "Chronic Otitis Media":["chronic_ear_discharge","hearing_loss","ear_pain","tinnitus"],
+    "Sinusitis (Acute)":["facial_pain","nasal_congestion","purulent_discharge","fever","headache"],
+    "Sinusitis (Chronic)":["chronic_nasal_congestion","facial_pain","headache","anosmia"],
+    "Allergic Rhinitis":["sneezing","runny_nose","nasal_congestion","pruritus","watery_eyes"],
+    "Nasal Polyps":["nasal_congestion","anosmia","headache","snoring"],
+    "Tonsillitis (Acute)":["sore_throat","fever","dysphagia","swollen_tonsils","lymphadenopathy"],
+    "Pharyngitis":["sore_throat","fever","dysphagia","headache","rhinorrhea"],
+    "Labyrinthitis":["vertigo","hearing_loss","tinnitus","nausea","vomiting"],
+    "Vestibular Neuritis":["sudden_vertigo","nausea","vomiting","balance_problems"],
+    "Nasal Septal Deviation":["nasal_obstruction","recurrent_sinusitis","nosebleed","snoring"],
+    "Vocal Cord Polyp":["hoarseness","voice_change","throat_irritation","chronic_cough"],
+    # OB/GYN
+    "Preeclampsia":["hypertension","proteinuria","edema","headache","visual_disturbances"],
+    "Eclampsia":["seizures","hypertension","proteinuria","edema","altered_sensorium"],
+    "Ectopic Pregnancy":["pelvic_pain","vaginal_bleeding","missed_period","syncope"],
+    "Miscarriage":["vaginal_bleeding","cramping","pelvic_pain"],
+    "Hyperemesis Gravidarum":["severe_vomiting","weight_loss","dehydration"],
+    "Endometriosis":["dysmenorrhea","pelvic_pain","dyspareunia","infertility","abnormal_menstruation"],
+    "Uterine Fibroids":["heavy_menstrual_bleeding","pelvic_pain","urinary_frequency","abdominal_fullness"],
+    "Ovarian Cyst":["pelvic_pain","bloating","irregular_periods","nausea"],
+    "Pelvic Inflammatory Disease":["pelvic_pain","fever","vaginal_discharge","dyspareunia"],
+    "Menopause":["hot_flashes","irregular_periods","night_sweats","vaginal_dryness","insomnia","mood_swings"],
+    "Dysmenorrhea":["period_cramps","lower_abdominal_pain","nausea","vomiting","back_pain"],
+    # PEDIATRIC
+    "Neonatal Jaundice":["yellowish_skin","yellowing_of_eyes","poor_feeding","lethargy"],
+    "Febrile Seizures":["fever","seizures","post_ictal_confusion"],
+    "Kawasaki Disease":["prolonged_fever","rash","red_eyes","swollen_lymph_nodes","strawberry_tongue","desquamation"],
+    "Pyloric Stenosis":["projectile_vomiting","weight_loss","dehydration","constipation"],
+    "Celiac Disease (Pediatric)":["diarrhoea","bloating","failure_to_thrive","abdominal_pain","anemia"],
+    "ADHD (Pediatric)":["inattention","hyperactivity","impulsivity","poor_school_performance"],
+    # ALLERGY/IMMUNOLOGY
+    "Anaphylaxis":["urticaria","angioedema","dyspnea","hypotension","tachycardia","nausea","vomiting"],
+    "Food Allergy":["urticaria","angioedema","vomiting","diarrhoea","dyspnea"],
+    "Drug Allergy":["skin_rash","urticaria","angioedema","fever","pruritus"],
+    # HEMATOLOGICAL
+    "Sickle Cell Disease":["episodic_pain","anemia","jaundice","fatigue","susceptibility_to_infection"],
+    "Thalassemia":["anemia","jaundice","splenomegaly","fatigue","pallor"],
+    "Hemophilia":["prolonged_bleeding","hemarthrosis","easy_bruising"],
+    "Von Willebrand Disease":["easy_bruising","prolonged_bleeding","nosebleeds","heavy_menstrual_bleeding"],
+    "Thrombocytopenia":["easy_bruising","petechiae","prolonged_bleeding","nosebleeds"],
+    "Polycythemia Vera":["facial_redness","headache","pruritus","splenomegaly","dizziness"],
+    "Aplastic Anaemia":["fatigue","pallor","bleeding","recurrent_infections","petechiae"],
+    "G6PD Deficiency":["hemolytic_anemia","jaundice","dark_urine","fatigue","pallor"],
+    # POISONING/EMERGENCY
+    "Heat Stroke":["hyperthermia","altered_sensorium","tachycardia","hot_dry_skin","seizures"],
+    "Heat Exhaustion":["fatigue","heavy_sweating","nausea","headache","dizziness","muscle_cramps"],
+    "Hypothermia":["shivering","confusion","pale_cold_skin","slow_heart_rate","slurred_speech"],
+    "Altitude Sickness":["headache","nausea","fatigue","dizziness","dyspnea","insomnia"],
+    "Carbon Monoxide Poisoning":["headache","confusion","nausea","vomiting","syncope"],
+    "Organophosphate Poisoning":["miosis","bradycardia","excessive_secretions","seizures","muscle_weakness"],
+    "Alcohol Poisoning":["vomiting","confusion","seizures","respiratory_depression","unconsciousness"],
+    "Paracetamol Overdose":["nausea","vomiting","right_upper_quadrant_pain","jaundice"],
+    "Opioid Overdose":["miosis","bradypnea","altered_sensorium","cyanosis"],
+    "Snake Bite":["local_swelling","pain","coagulopathy","neurotoxicity","tissue_necrosis"],
+    "Lead Poisoning":["abdominal_pain","constipation","cognitive_impairment","fatigue","anemia"],
 }
 
-def generate_dataset(n_samples=300):
-    """Generate synthetic training dataset from disease-symptom mappings."""
+DISEASE_METADATA = {
+    "Influenza (Flu)":{"severity":"low","doctors":["General Physician"],"medicines":["Paracetamol","Oseltamivir","ORS","Rest"]},
+    "COVID-19":{"severity":"medium","doctors":["General Physician","Pulmonologist"],"medicines":["Paracetamol","Azithromycin","Vitamins C&D","Isolation"]},
+    "COVID-19 Long Haul":{"severity":"medium","doctors":["General Physician","Pulmonologist"],"medicines":["Symptomatic","Rehabilitation","Vitamins"]},
+    "Common Cold":{"severity":"low","doctors":["General Physician"],"medicines":["Paracetamol","Antihistamine","Vitamin C","Rest"]},
+    "Malaria":{"severity":"high","doctors":["General Physician","Infectious Disease"],"medicines":["Chloroquine","Artemisinin","Primaquine","Quinine"]},
+    "Cerebral Malaria":{"severity":"high","doctors":["Emergency Medicine","Neurologist"],"medicines":["IV Artesunate","Dexamethasone","Hospital admission"]},
+    "Dengue Fever":{"severity":"medium","doctors":["General Physician","Infectious Disease"],"medicines":["Paracetamol","ORS","Rest","No NSAIDs"]},
+    "Dengue Hemorrhagic Fever":{"severity":"high","doctors":["Emergency Medicine","Hematologist"],"medicines":["IV fluids","Platelet transfusion","Hospital admission"]},
+    "Dengue Shock Syndrome":{"severity":"high","doctors":["Emergency Medicine"],"medicines":["IV fluids","Vasopressors","ICU care"]},
+    "Typhoid Fever":{"severity":"medium","doctors":["General Physician","Infectious Disease"],"medicines":["Ceftriaxone","Ciprofloxacin","Azithromycin"]},
+    "Paratyphoid":{"severity":"medium","doctors":["General Physician"],"medicines":["Ciprofloxacin","Ceftriaxone","Supportive care"]},
+    "Chikungunya":{"severity":"medium","doctors":["General Physician","Rheumatologist"],"medicines":["Paracetamol","NSAIDs","Rest","Physiotherapy"]},
+    "Zika Virus":{"severity":"medium","doctors":["General Physician","Infectious Disease"],"medicines":["Paracetamol","Rest","Hydration"]},
+    "Chickenpox":{"severity":"low","doctors":["General Physician","Dermatologist"],"medicines":["Acyclovir","Antihistamine","Calamine lotion","Paracetamol"]},
+    "Shingles (Herpes Zoster)":{"severity":"medium","doctors":["General Physician","Dermatologist"],"medicines":["Acyclovir","Valacyclovir","Pregabalin","Topical analgesics"]},
+    "Measles":{"severity":"medium","doctors":["General Physician","Pediatrician"],"medicines":["Vitamin A","Paracetamol","Supportive care"]},
+    "Mumps":{"severity":"low","doctors":["General Physician"],"medicines":["Paracetamol","Rest","Soft diet","Ice packs"]},
+    "Whooping Cough":{"severity":"medium","doctors":["General Physician","Pediatrician"],"medicines":["Azithromycin","Erythromycin","Supportive care"]},
+    "Diphtheria":{"severity":"high","doctors":["Infectious Disease","Pediatrician"],"medicines":["Antitoxin","Penicillin","Erythromycin","ICU if severe"]},
+    "Tetanus":{"severity":"high","doctors":["Emergency Medicine","Infectious Disease"],"medicines":["TIG","Metronidazole","Diazepam","ICU care"]},
+    "Rabies":{"severity":"high","doctors":["Emergency Medicine","Infectious Disease"],"medicines":["Post-exposure prophylaxis","Milwaukee protocol","ICU care"]},
+    "Leptospirosis":{"severity":"high","doctors":["Infectious Disease","General Physician"],"medicines":["Doxycycline","Penicillin","Ceftriaxone","IV fluids"]},
+    "Scrub Typhus":{"severity":"medium","doctors":["General Physician","Infectious Disease"],"medicines":["Doxycycline","Azithromycin","Supportive care"]},
+    "Meningitis (Bacterial)":{"severity":"high","doctors":["Emergency Medicine","Neurologist"],"medicines":["Ceftriaxone","Dexamethasone","IV fluids","ICU care"]},
+    "Meningitis (Viral)":{"severity":"medium","doctors":["Neurologist","General Physician"],"medicines":["Supportive care","Paracetamol","Acyclovir if HSV"]},
+    "Encephalitis":{"severity":"high","doctors":["Neurologist","Emergency Medicine"],"medicines":["Acyclovir","Anticonvulsants","ICU care","Supportive"]},
+    "Poliomyelitis":{"severity":"high","doctors":["Neurologist","Infectious Disease"],"medicines":["Supportive care","Physiotherapy","Ventilation if needed"]},
+    "Viral Hepatitis A":{"severity":"low","doctors":["Gastroenterologist","General Physician"],"medicines":["Rest","Hydration","No alcohol","Supportive"]},
+    "Viral Hepatitis B":{"severity":"medium","doctors":["Gastroenterologist","Hepatologist"],"medicines":["Tenofovir","Entecavir","Interferon","Monitoring"]},
+    "Viral Hepatitis C":{"severity":"medium","doctors":["Gastroenterologist","Hepatologist"],"medicines":["Sofosbuvir","Ledipasvir","Daclatasvir","Ribavirin"]},
+    "Viral Hepatitis E":{"severity":"medium","doctors":["Gastroenterologist","General Physician"],"medicines":["Supportive care","Rest","Hydration"]},
+    "HIV/AIDS":{"severity":"high","doctors":["Infectious Disease","Immunologist"],"medicines":["ART (TDF+3TC+EFV)","Cotrimoxazole","Regular monitoring"]},
+    "Tuberculosis (Pulmonary)":{"severity":"high","doctors":["Pulmonologist","Infectious Disease"],"medicines":["Isoniazid","Rifampicin","Ethambutol","Pyrazinamide"]},
+    "Tuberculosis (Extrapulmonary)":{"severity":"high","doctors":["Infectious Disease","Pulmonologist"],"medicines":["HRZE regimen","Steroids if CNS/Pericardial"]},
+    "Miliary Tuberculosis":{"severity":"high","doctors":["Pulmonologist","Infectious Disease"],"medicines":["HRZE regimen","ICU if severe"]},
+    "Leprosy":{"severity":"medium","doctors":["Dermatologist","Infectious Disease"],"medicines":["Dapsone","Rifampicin","Clofazimine","MDT regimen"]},
+    "Kala-azar (Leishmaniasis)":{"severity":"high","doctors":["Infectious Disease"],"medicines":["Amphotericin B","Miltefosine","Antimonials"]},
+    "Amoebiasis":{"severity":"medium","doctors":["General Physician","Gastroenterologist"],"medicines":["Metronidazole","Tinidazole","Diloxanide furoate"]},
+    "Giardiasis":{"severity":"low","doctors":["General Physician","Gastroenterologist"],"medicines":["Metronidazole","Tinidazole","Nitazoxanide"]},
+    "Cholera":{"severity":"high","doctors":["Infectious Disease","Emergency Medicine"],"medicines":["ORS","IV fluids","Doxycycline","Zinc","Hospitalization"]},
+    "Food Poisoning":{"severity":"low","doctors":["General Physician"],"medicines":["ORS","Antiemetics","Antibiotics if bacterial","Rest"]},
+    "Asthma":{"severity":"medium","doctors":["Pulmonologist","Allergist"],"medicines":["Salbutamol inhaler","Budesonide ICS","Montelukast","LABA"]},
+    "COPD":{"severity":"high","doctors":["Pulmonologist"],"medicines":["Tiotropium","Salmeterol","ICS","Roflumilast","O2 therapy"]},
+    "Chronic Bronchitis":{"severity":"medium","doctors":["Pulmonologist","General Physician"],"medicines":["Bronchodilators","ICS","Antibiotics if exacerbation","Mucolytics"]},
+    "Pneumonia (Bacterial)":{"severity":"high","doctors":["Pulmonologist","General Physician"],"medicines":["Amoxicillin","Ceftriaxone","Azithromycin","Levofloxacin"]},
+    "Pneumonia (Viral)":{"severity":"medium","doctors":["Pulmonologist","General Physician"],"medicines":["Oseltamivir","Supportive","O2 if needed"]},
+    "Pulmonary Embolism":{"severity":"high","doctors":["Emergency Medicine","Pulmonologist"],"medicines":["Heparin","Warfarin","Rivaroxaban","tPA if massive"]},
+    "Pulmonary Hypertension":{"severity":"high","doctors":["Pulmonologist","Cardiologist"],"medicines":["Sildenafil","Bosentan","Prostacyclins","Warfarin"]},
+    "Obstructive Sleep Apnea":{"severity":"medium","doctors":["ENT Specialist","Pulmonologist"],"medicines":["CPAP","Weight loss","Surgery","Positional therapy"]},
+    "Coronary Artery Disease":{"severity":"high","doctors":["Cardiologist"],"medicines":["Aspirin","Statin","Beta-blocker","ACE inhibitor","Nitrates"]},
+    "Acute MI (Heart Attack)":{"severity":"high","doctors":["Emergency Medicine","Cardiologist"],"medicines":["Aspirin","Clopidogrel","Heparin","PCI","Thrombolysis"]},
+    "Heart Failure":{"severity":"high","doctors":["Cardiologist"],"medicines":["Furosemide","ACE inhibitor","Beta-blocker","Spironolactone"]},
+    "Atrial Fibrillation":{"severity":"medium","doctors":["Cardiologist"],"medicines":["Warfarin","Digoxin","Beta-blocker","Cardioversion"]},
+    "Deep Vein Thrombosis":{"severity":"high","doctors":["Vascular Surgeon","Hematologist"],"medicines":["Heparin","Warfarin","Rivaroxaban","Compression stockings"]},
+    "Endocarditis":{"severity":"high","doctors":["Cardiologist","Infectious Disease"],"medicines":["IV Penicillin","Gentamicin","Vancomycin","Surgery if needed"]},
+    "Hypertensive Crisis":{"severity":"high","doctors":["Emergency Medicine","Cardiologist"],"medicines":["IV Labetalol","Hydralazine","Sodium nitroprusside","ICU"]},
+    "GERD":{"severity":"low","doctors":["Gastroenterologist","General Physician"],"medicines":["Omeprazole","Pantoprazole","Ranitidine","Lifestyle changes"]},
+    "Peptic Ulcer Disease":{"severity":"medium","doctors":["Gastroenterologist"],"medicines":["Omeprazole","Amoxicillin","Clarithromycin","H.pylori eradication"]},
+    "Gastritis":{"severity":"low","doctors":["Gastroenterologist","General Physician"],"medicines":["Omeprazole","Antacids","Avoid NSAIDs","Diet changes"]},
+    "Appendicitis":{"severity":"high","doctors":["General Surgeon","Emergency Medicine"],"medicines":["Emergency surgery","Antibiotics (pre-op)"]},
+    "Cholecystitis":{"severity":"high","doctors":["General Surgeon","Gastroenterologist"],"medicines":["Antibiotics","Cholecystectomy","IV fluids","Analgesia"]},
+    "Pancreatitis (Acute)":{"severity":"high","doctors":["Gastroenterologist","General Surgeon"],"medicines":["IV fluids","Fasting","Pain management","Hospital admission"]},
+    "Hepatic Cirrhosis":{"severity":"high","doctors":["Hepatologist","Gastroenterologist"],"medicines":["Propranolol","Spironolactone","Lactulose","Liver transplant"]},
+    "Crohn's Disease":{"severity":"medium","doctors":["Gastroenterologist"],"medicines":["Mesalamine","Azathioprine","Infliximab","Steroids"]},
+    "Ulcerative Colitis":{"severity":"medium","doctors":["Gastroenterologist"],"medicines":["Mesalamine","Sulfasalazine","Steroids","Biologics"]},
+    "Irritable Bowel Syndrome":{"severity":"low","doctors":["Gastroenterologist","General Physician"],"medicines":["Mebeverine","Loperamide","Fiber","Low-FODMAP diet"]},
+    "Celiac Disease":{"severity":"medium","doctors":["Gastroenterologist"],"medicines":["Strict gluten-free diet","Nutritional supplements"]},
+    "Urinary Tract Infection":{"severity":"low","doctors":["General Physician","Urologist"],"medicines":["Nitrofurantoin","Ciprofloxacin","Trimethoprim","Cephalexin"]},
+    "Kidney Stones":{"severity":"medium","doctors":["Urologist","Nephrologist"],"medicines":["NSAIDs","Tamsulosin","IV fluids","Lithotripsy if needed"]},
+    "Chronic Kidney Disease":{"severity":"high","doctors":["Nephrologist"],"medicines":["ACE inhibitor","Erythropoietin","Phosphate binders","Dialysis"]},
+    "Type 1 Diabetes":{"severity":"high","doctors":["Endocrinologist","Diabetologist"],"medicines":["Insulin (Basal-Bolus)","SMBG","Dietary management"]},
+    "Type 2 Diabetes":{"severity":"medium","doctors":["Endocrinologist","General Physician"],"medicines":["Metformin","Glipizide","Sitagliptin","Insulin","Diet control"]},
+    "Diabetic Ketoacidosis":{"severity":"high","doctors":["Emergency Medicine","Endocrinologist"],"medicines":["IV insulin","IV fluids","Electrolyte replacement","ICU"]},
+    "Hypothyroidism":{"severity":"medium","doctors":["Endocrinologist","General Physician"],"medicines":["Levothyroxine","Regular TSH monitoring"]},
+    "Hyperthyroidism":{"severity":"medium","doctors":["Endocrinologist"],"medicines":["Carbimazole","Propylthiouracil","Beta-blockers","Radioiodine"]},
+    "Addison Disease":{"severity":"high","doctors":["Endocrinologist"],"medicines":["Hydrocortisone","Fludrocortisone","Emergency IV steroids if crisis"]},
+    "Cushing Syndrome":{"severity":"high","doctors":["Endocrinologist","Neurosurgeon"],"medicines":["Surgery","Ketoconazole","Metyrapone","Radiotherapy"]},
+    "PCOS":{"severity":"medium","doctors":["Gynecologist","Endocrinologist"],"medicines":["Metformin","OCP","Clomiphene","Diet and exercise"]},
+    "Vitamin D Deficiency":{"severity":"low","doctors":["General Physician","Endocrinologist"],"medicines":["Vitamin D3 60000IU weekly","Calcium","Sun exposure"]},
+    "Vitamin B12 Deficiency":{"severity":"medium","doctors":["General Physician","Hematologist"],"medicines":["B12 injections","B12 tablets","Multivitamins"]},
+    "Iron Deficiency Anaemia":{"severity":"medium","doctors":["General Physician","Hematologist"],"medicines":["Ferrous sulfate","Vitamin C","Iron-rich diet","IV iron if severe"]},
+    "Stroke (Ischemic)":{"severity":"high","doctors":["Neurologist","Emergency Medicine"],"medicines":["Aspirin","tPA (within 4.5h)","Anticoagulants","Rehab"]},
+    "Stroke (Hemorrhagic)":{"severity":"high","doctors":["Neurosurgeon","Neurologist"],"medicines":["BP control","Surgery if indicated","ICU care"]},
+    "Epilepsy":{"severity":"high","doctors":["Neurologist"],"medicines":["Valproate","Phenytoin","Levetiracetam","Carbamazepine"]},
+    "Parkinson Disease":{"severity":"high","doctors":["Neurologist"],"medicines":["Levodopa","Carbidopa","Dopamine agonists","MAO-B inhibitors"]},
+    "Alzheimer Disease":{"severity":"high","doctors":["Neurologist","Psychiatrist"],"medicines":["Donepezil","Memantine","Rivastigmine","Caregiver support"]},
+    "Multiple Sclerosis":{"severity":"high","doctors":["Neurologist"],"medicines":["Interferon beta","Glatiramer","Natalizumab","Fingolimod"]},
+    "Migraine":{"severity":"medium","doctors":["Neurologist","General Physician"],"medicines":["Sumatriptan","Paracetamol","Topiramate","Propranolol"]},
+    "Peripheral Neuropathy":{"severity":"medium","doctors":["Neurologist","General Physician"],"medicines":["Pregabalin","Gabapentin","B12 supplements","Duloxetine"]},
+    "Carpal Tunnel Syndrome":{"severity":"low","doctors":["Orthopedist","Neurologist"],"medicines":["Wrist splint","NSAIDs","Corticosteroid injection","Surgery"]},
+    "Vertigo (BPPV)":{"severity":"medium","doctors":["ENT Specialist","Neurologist"],"medicines":["Betahistine","Epley maneuver","Meclizine","Diazepam"]},
+    "Meniere Disease":{"severity":"medium","doctors":["ENT Specialist","Neurologist"],"medicines":["Betahistine","Diuretics","Low-salt diet","Surgery if refractory"]},
+    "Major Depression":{"severity":"medium","doctors":["Psychiatrist","Psychologist"],"medicines":["Sertraline","Fluoxetine","Escitalopram","CBT therapy"]},
+    "Bipolar Disorder":{"severity":"high","doctors":["Psychiatrist"],"medicines":["Lithium","Valproate","Quetiapine","Lamotrigine"]},
+    "Schizophrenia":{"severity":"high","doctors":["Psychiatrist"],"medicines":["Risperidone","Olanzapine","Clozapine","Haloperidol"]},
+    "Generalized Anxiety Disorder":{"severity":"medium","doctors":["Psychiatrist","Psychologist"],"medicines":["Sertraline","Escitalopram","Buspirone","CBT therapy"]},
+    "Panic Disorder":{"severity":"medium","doctors":["Psychiatrist","Psychologist"],"medicines":["Sertraline","Clonazepam","Propranolol","CBT therapy"]},
+    "PTSD":{"severity":"medium","doctors":["Psychiatrist","Psychologist"],"medicines":["Sertraline","Paroxetine","Prazosin","EMDR therapy"]},
+    "Insomnia Disorder":{"severity":"low","doctors":["General Physician","Psychiatrist"],"medicines":["Melatonin","Zolpidem","Sleep hygiene","CBT-I therapy"]},
+    "Rheumatoid Arthritis":{"severity":"medium","doctors":["Rheumatologist"],"medicines":["Methotrexate","Hydroxychloroquine","Sulfasalazine","TNF inhibitors"]},
+    "Osteoarthritis":{"severity":"medium","doctors":["Orthopedist","Rheumatologist"],"medicines":["Paracetamol","Ibuprofen","Diclofenac","Glucosamine","Physiotherapy"]},
+    "Gout":{"severity":"medium","doctors":["Rheumatologist","General Physician"],"medicines":["Allopurinol","Colchicine","Indomethacin","Low-purine diet"]},
+    "Ankylosing Spondylitis":{"severity":"medium","doctors":["Rheumatologist","Orthopedist"],"medicines":["NSAIDs","Sulfasalazine","TNF inhibitors","Physiotherapy"]},
+    "Systemic Lupus":{"severity":"high","doctors":["Rheumatologist","Nephrologist"],"medicines":["Hydroxychloroquine","Steroids","Azathioprine","Mycophenolate"]},
+    "Fibromyalgia":{"severity":"medium","doctors":["Rheumatologist","Neurologist"],"medicines":["Pregabalin","Duloxetine","Amitriptyline","Exercise therapy"]},
+    "Osteoporosis":{"severity":"medium","doctors":["Orthopedist","Endocrinologist"],"medicines":["Alendronate","Calcium","Vitamin D3","Exercise","HRT"]},
+    "Septic Arthritis":{"severity":"high","doctors":["Orthopedist","Infectious Disease"],"medicines":["IV Antibiotics","Joint aspiration","Surgical drainage"]},
+    "Psoriasis":{"severity":"medium","doctors":["Dermatologist"],"medicines":["Topical steroids","Methotrexate","Biologics","Phototherapy"]},
+    "Atopic Dermatitis":{"severity":"low","doctors":["Dermatologist","Allergist"],"medicines":["Emollients","Hydrocortisone","Tacrolimus","Antihistamines"]},
+    "Fungal Skin Infection":{"severity":"low","doctors":["Dermatologist","General Physician"],"medicines":["Clotrimazole","Terbinafine","Fluconazole","Antifungal powder"]},
+    "Scabies":{"severity":"low","doctors":["Dermatologist"],"medicines":["Permethrin cream","Ivermectin","Antihistamine","Calamine lotion"]},
+    "Acne Vulgaris":{"severity":"low","doctors":["Dermatologist"],"medicines":["Benzoyl peroxide","Clindamycin gel","Retinoids","Salicylic acid"]},
+    "Urticaria":{"severity":"low","doctors":["Dermatologist","Allergist"],"medicines":["Cetirizine","Loratadine","Ranitidine","Steroids if severe"]},
+    "Cellulitis":{"severity":"medium","doctors":["General Physician","Dermatologist"],"medicines":["Amoxicillin-clavulanate","Flucloxacillin","IV antibiotics if severe"]},
+    "Stevens-Johnson Syndrome":{"severity":"high","doctors":["Dermatologist","Emergency Medicine"],"medicines":["Stop causative drug","IV fluids","Steroids","ICU"]},
+    "Anaphylaxis":{"severity":"high","doctors":["Emergency Medicine","Allergist"],"medicines":["IM Epinephrine 0.5mg","Antihistamines","Steroids","IV fluids"]},
+    "Allergic Rhinitis":{"severity":"low","doctors":["ENT Specialist","Allergist"],"medicines":["Cetirizine","Montelukast","Nasal steroids","Immunotherapy"]},
+    "Lung Cancer":{"severity":"high","doctors":["Oncologist","Pulmonologist"],"medicines":["Chemotherapy","Radiotherapy","Immunotherapy","Surgery"]},
+    "Breast Cancer":{"severity":"high","doctors":["Oncologist","Surgeon"],"medicines":["Surgery","Chemotherapy","Tamoxifen","Trastuzumab"]},
+    "Colorectal Cancer":{"severity":"high","doctors":["Oncologist","Gastroenterologist"],"medicines":["Surgery","FOLFOX","Bevacizumab","Cetuximab"]},
+    "Cervical Cancer":{"severity":"high","doctors":["Gynecologic Oncologist"],"medicines":["Surgery","Chemotherapy","Radiotherapy","Cisplatin"]},
+    "Lymphoma (Hodgkin)":{"severity":"high","doctors":["Oncologist","Hematologist"],"medicines":["ABVD chemotherapy","Radiotherapy","Brentuximab"]},
+    "Lymphoma (Non-Hodgkin)":{"severity":"high","doctors":["Oncologist","Hematologist"],"medicines":["R-CHOP","Rituximab","Stem cell transplant"]},
+    "Leukemia (ALL)":{"severity":"high","doctors":["Oncologist","Hematologist"],"medicines":["Vincristine","Prednisolone","Methotrexate","Bone marrow transplant"]},
+    "Multiple Myeloma":{"severity":"high","doctors":["Hematologist","Oncologist"],"medicines":["Bortezomib","Lenalidomide","Dexamethasone","Stem cell transplant"]},
+    "Glaucoma":{"severity":"high","doctors":["Ophthalmologist"],"medicines":["Timolol eye drops","Latanoprost","Brimonidine","Surgery if needed"]},
+    "Cataract":{"severity":"medium","doctors":["Ophthalmologist"],"medicines":["Surgical extraction","IOL implant","Glasses (early stage)"]},
+    "Conjunctivitis (Bacterial)":{"severity":"low","doctors":["Ophthalmologist","General Physician"],"medicines":["Ciprofloxacin eye drops","Chloramphenicol","Cold compresses"]},
+    "Diabetic Retinopathy":{"severity":"high","doctors":["Ophthalmologist","Endocrinologist"],"medicines":["Laser therapy","Anti-VEGF injections","Blood sugar control"]},
+    "Otitis Media":{"severity":"low","doctors":["ENT Specialist","General Physician"],"medicines":["Amoxicillin","Paracetamol","Ear drops","Watchful waiting"]},
+    "Sinusitis (Acute)":{"severity":"low","doctors":["ENT Specialist","General Physician"],"medicines":["Amoxicillin","Nasal saline","Decongestants","Nasal steroids"]},
+    "Tonsillitis (Acute)":{"severity":"low","doctors":["ENT Specialist","General Physician"],"medicines":["Amoxicillin","Paracetamol","Benzydamine gargles","Rest"]},
+    "Allergic Conjunctivitis":{"severity":"low","doctors":["Ophthalmologist","Allergist"],"medicines":["Antihistamine eye drops","Cetirizine","Cold compresses"]},
+    "Preeclampsia":{"severity":"high","doctors":["Obstetrician","Perinatologist"],"medicines":["Magnesium sulfate","Antihypertensives","Delivery of baby"]},
+    "Endometriosis":{"severity":"medium","doctors":["Gynecologist"],"medicines":["NSAIDs","Hormonal therapy","GnRH agonists","Laparoscopy"]},
+    "Uterine Fibroids":{"severity":"medium","doctors":["Gynecologist"],"medicines":["NSAIDs","Tranexamic acid","GnRH agonists","Myomectomy"]},
+    "Pelvic Inflammatory Disease":{"severity":"medium","doctors":["Gynecologist","Infectious Disease"],"medicines":["Doxycycline","Metronidazole","Ceftriaxone"]},
+    "Menopause":{"severity":"low","doctors":["Gynecologist","Endocrinologist"],"medicines":["HRT","Vitamin D","Calcium","SSRIs for hot flashes"]},
+    "Sickle Cell Disease":{"severity":"high","doctors":["Hematologist"],"medicines":["Hydroxyurea","Pain management","Blood transfusion","Folic acid"]},
+    "Thalassemia":{"severity":"high","doctors":["Hematologist"],"medicines":["Blood transfusion","Deferasirox","Folic acid","Bone marrow transplant"]},
+    "Heat Stroke":{"severity":"high","doctors":["Emergency Medicine"],"medicines":["Cooling measures","IV fluids","Temperature monitoring","ICU"]},
+    "Carbon Monoxide Poisoning":{"severity":"high","doctors":["Emergency Medicine"],"medicines":["100% O2","Hyperbaric oxygen","Supportive care"]},
+    "Organophosphate Poisoning":{"severity":"high","doctors":["Emergency Medicine","Toxicologist"],"medicines":["Atropine","Pralidoxime","Diazepam","Supportive care"]},
+    "Opioid Overdose":{"severity":"high","doctors":["Emergency Medicine"],"medicines":["Naloxone IV/IM","O2","IV fluids","ICU monitoring"]},
+    "Snake Bite":{"severity":"high","doctors":["Emergency Medicine","Toxicologist"],"medicines":["Polyvalent antivenom","Tetanus toxoid","Antibiotics","ICU"]},
+}
+
+# Fill missing metadata
+for disease in DISEASE_SYMPTOM_MAP:
+    if disease not in DISEASE_METADATA:
+        sev = "medium"
+        for h in ["Cancer","Carcinoma","Lymphoma","Leukemia","Stroke","Attack","Failure","Crisis","Poisoning","Overdose","Shock","Acute MI","Eclampsia"]:
+            if h.lower() in disease.lower():
+                sev = "high"
+                break
+        for h in ["Deficiency","Allergy","Cold","Rhinitis","Wart","Polyp","Cyst","Sebaceous"]:
+            if h.lower() in disease.lower():
+                sev = "low"
+                break
+        if sev == "medium":
+            DISEASE_METADATA[disease] = {"severity":"medium","doctors":["General Physician","Specialist"],"medicines":["Consult doctor for proper diagnosis and treatment"]}
+        elif sev == "high":
+            DISEASE_METADATA[disease] = {"severity":"high","doctors":["Emergency Medicine","Specialist"],"medicines":["Seek immediate medical attention"]}
+        else:
+            DISEASE_METADATA[disease] = {"severity":"low","doctors":["General Physician"],"medicines":["Symptomatic treatment","Rest","Consult if worsens"]}
+
+
+def generate_dataset(n_samples=100):
     feature_cols = list(USER_SYMPTOMS.keys())
-    rows = []
-    labels = []
-    
+    rows, labels = [], []
     for disease, disease_symptoms in DISEASE_SYMPTOM_MAP.items():
         for _ in range(n_samples):
             row = {}
             for user_sym, model_syms in USER_SYMPTOMS.items():
-                # Check if any model symptom is in disease symptoms
                 base_match = any(s in disease_symptoms for s in model_syms)
-                if base_match:
-                    # High probability of having this symptom if it's a disease symptom
-                    row[user_sym] = 1 if np.random.random() > 0.2 else 0
-                else:
-                    # Low probability (noise/comorbidity)
-                    row[user_sym] = 1 if np.random.random() < 0.08 else 0
+                row[user_sym] = 1 if (base_match and np.random.random() > 0.18) or \
+                                     (not base_match and np.random.random() < 0.04) else 0
             rows.append(row)
             labels.append(disease)
-    
-    df = pd.DataFrame(rows, columns=feature_cols)
-    return df, labels
+    return pd.DataFrame(rows, columns=feature_cols), labels
+
 
 def train_and_save():
-    print("🔬 Generating training dataset...")
-    X, y = generate_dataset(n_samples=200)
-    
+    print(f"=== CureHealth AI Model ===")
+    print(f"Diseases: {len(DISEASE_SYMPTOM_MAP)} | Symptoms: {len(USER_SYMPTOMS)}")
+    print("Generating dataset...")
+    X, y = generate_dataset(n_samples=100)
+    print(f"Total samples: {len(X)}")
+
     le = LabelEncoder()
-    y_encoded = le.fit_transform(y)
-    
+    y_enc = le.fit_transform(y)
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
-    )
-    
-    print("🌲 Training Random Forest model...")
-    rf_model = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=20,
-        min_samples_split=5,
-        random_state=42,
-        n_jobs=-1
-    )
-    rf_model.fit(X_train, y_train)
-    
-    print("📊 Training Gradient Boosting model...")
-    gb_model = GradientBoostingClassifier(
-        n_estimators=100,
-        learning_rate=0.1,
-        max_depth=5,
-        random_state=42
-    )
-    gb_model.fit(X_train, y_train)
-    
-    # Evaluate
-    rf_acc = accuracy_score(y_test, rf_model.predict(X_test))
-    gb_acc = accuracy_score(y_test, gb_model.predict(X_test))
-    print(f"\n✅ Random Forest Accuracy: {rf_acc:.2%}")
-    print(f"✅ Gradient Boosting Accuracy: {gb_acc:.2%}")
-    
-    # Save models and metadata
+        X, y_enc, test_size=0.2, random_state=42, stratify=y_enc)
+
+    print("Training Random Forest...")
+    rf = RandomForestClassifier(n_estimators=300, max_depth=25,
+                                min_samples_split=4, random_state=42, n_jobs=-1)
+    rf.fit(X_train, y_train)
+
+    print("Training Gradient Boosting...")
+    gb = GradientBoostingClassifier(n_estimators=150, learning_rate=0.08,
+                                    max_depth=6, random_state=42)
+    gb.fit(X_train, y_train)
+
+    rf_acc = accuracy_score(y_test, rf.predict(X_test))
+    gb_acc = accuracy_score(y_test, gb.predict(X_test))
+    print(f"RF: {rf_acc:.2%} | GB: {gb_acc:.2%}")
+
     os.makedirs("models", exist_ok=True)
-    joblib.dump(rf_model, "models/rf_model.pkl")
-    joblib.dump(gb_model, "models/gb_model.pkl")
+    joblib.dump(rf, "models/rf_model.pkl")
+    joblib.dump(gb, "models/gb_model.pkl")
     joblib.dump(le, "models/label_encoder.pkl")
-    
-    # Save feature names and disease info
+
     with open("models/metadata.json", "w") as f:
         json.dump({
             "features": list(USER_SYMPTOMS.keys()),
@@ -342,11 +762,13 @@ def train_and_save():
             "rf_accuracy": rf_acc,
             "gb_accuracy": gb_acc,
             "user_symptom_map": USER_SYMPTOMS,
+            "disease_metadata": DISEASE_METADATA,
+            "total_diseases": len(DISEASE_SYMPTOM_MAP),
+            "total_symptoms": len(USER_SYMPTOMS),
         }, f, indent=2)
-    
-    print("\n💾 Models saved to models/ directory")
-    print(f"📋 {len(DISEASE_SYMPTOM_MAP)} diseases | {len(USER_SYMPTOMS)} symptom features")
-    return rf_model, gb_model, le
+
+    print(f"\n✅ Done! {len(DISEASE_SYMPTOM_MAP)} diseases | {len(USER_SYMPTOMS)} symptoms")
+
 
 if __name__ == "__main__":
     train_and_save()
