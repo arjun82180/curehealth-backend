@@ -35,7 +35,7 @@ load_models()
 
 # ─── Gemini Client ───────────────────────────────────────────
 # Get your FREE API key from: https://aistudio.google.com/app/apikey
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY)
 GROQ_MODEL  = "llama-3.3-70b-versatile"
 
@@ -345,75 +345,160 @@ def predict_disease():
             # Fallback: rule-based prediction when model not trained
             return _rule_based_predict(selected_symptoms, age, gender)
 
-        # Build feature vector
+        # ══════════════════════════════════════════════════
+        # IMPROVEMENT 1 — Symptom Weight Algorithm
+        # Each symptom has importance weight per disease
+        # Score = Sum(matched_weights) / total_possible_weight
+        # ══════════════════════════════════════════════════
+        SYMPTOM_WEIGHTS = {
+            # Fever-related
+            "Fever":0.8, "Chills":0.9, "Night Sweats":0.85, "Sweating":0.7,
+            # Respiratory
+            "Cough":0.75, "Shortness of Breath":0.9, "Wheezing":0.92,
+            "Chest Tightness":0.85, "Phlegm":0.7, "Coughing Blood":0.95,
+            # Neuro
+            "Headache":0.6, "Neck Stiffness":0.95, "Seizures":0.98,
+            "Confusion":0.9, "Paralysis":0.98, "Slurred Speech":0.97,
+            # Cardiac
+            "Chest Pain":0.92, "Palpitations":0.8, "Swollen Legs":0.8,
+            "Cyanosis":0.95,
+            # GI
+            "Nausea":0.5, "Vomiting":0.65, "Diarrhea":0.7,
+            "Bloody Stool":0.95, "Vomiting Blood":0.97, "Bloody Diarrhea":0.95,
+            "Stomach Pain":0.65, "Yellowing Skin":0.92,
+            # Urinary
+            "Frequent Urination":0.8, "Burning Urination":0.85,
+            "Blood in Urine":0.92, "Flank Pain":0.8,
+            # Skin
+            "Skin Rash":0.7, "Itching":0.5, "Blisters":0.85, "Petechiae":0.95,
+            # General
+            "Fatigue":0.4, "Weakness":0.45, "Weight Loss":0.75,
+            "Loss of Appetite":0.5, "Joint Pain":0.65, "Muscle Pain":0.6,
+            # High-specificity
+            "Loss of Smell":0.88, "Loss of Taste":0.88,
+        }
+        DEFAULT_WEIGHT = 0.55
+
+        n_symptoms    = len(selected_symptoms)
+        disease_meta  = metadata.get("disease_metadata", {})
+        sym_map       = metadata.get("user_symptom_map", {})
+
+        # ══════════════════════════════════════════════════
+        # IMPROVEMENT 3 — Location-based disease boost (India)
+        # ══════════════════════════════════════════════════
+        country = data.get("country", "India")
+        LOCATION_BOOST = {}
+        if country == "India":
+            LOCATION_BOOST = {
+                "Malaria": 12, "Dengue Fever": 12, "Typhoid Fever": 10,
+                "Chikungunya": 10, "Leptospirosis": 8,
+                "Influenza (Flu)": 5, "Tuberculosis (Pulmonary)": 8,
+                "Kala-azar (Leishmaniasis)": 6, "Cholera": 5,
+                "Viral Hepatitis A": 7, "Viral Hepatitis E": 7,
+            }
+
+        # ══════════════════════════════════════════════════
+        # IMPROVEMENT 4 — Follow-up smart questions
+        # ══════════════════════════════════════════════════
+        FOLLOWUP_QUESTIONS = {
+            "Malaria":           ["Have you been bitten by mosquitoes recently?",
+                                  "Do you have cyclical (every 2-3 day) fever?",
+                                  "Have you travelled to a forest or rural area?"],
+            "Dengue Fever":      ["Do you have pain behind the eyes?",
+                                  "Have you noticed red spots on your skin?",
+                                  "Is there platelet drop in blood test?"],
+            "Typhoid Fever":     ["How many days have you had fever (>5 days)?",
+                                  "Do you have rose-colored spots on abdomen?",
+                                  "Is your fever worse in the evening?"],
+            "Tuberculosis (Pulmonary)":["Have you been coughing for more than 2 weeks?",
+                                  "Do you have a TB-positive contact at home?",
+                                  "Have you lost significant weight recently?"],
+            "COVID-19":          ["Have you lost sense of smell or taste?",
+                                  "Have you been in contact with a COVID patient?",
+                                  "Do you have body aches and fatigue together?"],
+            "Pneumonia (Bacterial)":["Is your cough producing yellow/green mucus?",
+                                  "Do you feel sharp chest pain on breathing?",
+                                  "Do you have high fever with shivering?"],
+            "Asthma":            ["Do symptoms worsen at night or early morning?",
+                                  "Do you have allergies (dust, pollen, pets)?",
+                                  "Does exercise trigger your breathlessness?"],
+            "Urinary Tract Infection":["Is there pain in lower abdomen or back?",
+                                  "Is your urine cloudy or foul-smelling?",
+                                  "Do you feel urgency to urinate frequently?"],
+            "Appendicitis":      ["Does the pain start near navel and move to right side?",
+                                  "Does the pain worsen on movement?",
+                                  "Do you have fever with loss of appetite?"],
+            "Heart Attack":      ["Is the pain spreading to left arm or jaw?",
+                                  "Are you sweating profusely with chest pain?",
+                                  "Do you have a history of heart disease?"],
+        }
+
+        # Build feature vector for ML
         features = metadata["features"]
         feature_vector = [1 if f in selected_symptoms else 0 for f in features]
         X = np.array([feature_vector])
 
-        # Ensemble prediction
-        rf_proba = rf_model.predict_proba(X)[0]
-        gb_proba = gb_model.predict_proba(X)[0]
+        rf_proba  = rf_model.predict_proba(X)[0]
+        gb_proba  = gb_model.predict_proba(X)[0]
         ensemble_proba = (0.6 * rf_proba + 0.4 * gb_proba)
 
-        # ── Smart Scoring: penalise rare/serious if few symptoms ──
-        n_symptoms = len(selected_symptoms)
-        disease_symptom_map = metadata.get("user_symptom_map", {})
-        disease_meta = metadata.get("disease_metadata", {})
+        diseases    = label_encoder.classes_
+        top_indices = np.argsort(ensemble_proba)[::-1][:20]
 
-        # Build symptom→disease coverage map
-        from train_model import DISEASE_SYMPTOM_MAP as DSM
-
-        def coverage_score(disease_name, selected):
-            """How many selected symptoms match this disease (normalised)."""
-            all_syms = DSM.get(disease_name, [])
-            sym_map  = metadata.get("user_symptom_map", {})
-            matched  = 0
-            for sel in selected:
-                internal = sym_map.get(sel, [sel.lower()])
-                if any(iv in all_syms for iv in internal):
-                    matched += 1
-            return matched / max(len(selected), 1)
-
-        diseases = label_encoder.classes_
-        top_indices = np.argsort(ensemble_proba)[::-1][:15]  # grab more candidates
+        try:
+            from train_model import DISEASE_SYMPTOM_MAP as DSM
+        except Exception:
+            DSM = {}
 
         scored = []
         for idx in top_indices:
-            disease = diseases[idx]
+            disease  = diseases[idx]
             ml_prob  = float(ensemble_proba[idx])
-            if ml_prob < 0.01:
+            if ml_prob < 0.008:
                 continue
 
-            cov  = coverage_score(disease, selected_symptoms)
+            # ── Improvement 1: weighted coverage score ──
+            disease_syms = DSM.get(disease, [])
+            total_w = 0.0
+            match_w = 0.0
+            for sel in selected_symptoms:
+                internal = sym_map.get(sel, [sel.lower().replace(" ","_")])
+                w = SYMPTOM_WEIGHTS.get(sel, DEFAULT_WEIGHT)
+                total_w += w
+                if any(iv in disease_syms for iv in internal):
+                    match_w += w
+            cov = match_w / max(total_w, 0.01)
+
             meta = disease_meta.get(disease, {})
             sev  = meta.get("severity", "medium")
 
-            # Severity penalty: high-severity diseases need stronger symptom match
+            # Severity penalty
             sev_penalty = 1.0
             if sev == "high"   and cov < 0.5 and n_symptoms <= 3:
-                sev_penalty = 0.35   # heavily penalise rare-disease if few symptoms
+                sev_penalty = 0.30
             elif sev == "high"  and cov < 0.4:
-                sev_penalty = 0.55
+                sev_penalty = 0.50
             elif sev == "medium" and cov < 0.3:
                 sev_penalty = 0.75
-
-            # Common/low diseases get a small boost when symptoms fully match
             if sev == "low" and cov >= 0.6:
-                sev_penalty = 1.15
+                sev_penalty = 1.2
 
             final_score = ml_prob * cov * sev_penalty
+
+            # ── Improvement 3: location boost ──
+            loc_boost = LOCATION_BOOST.get(disease, 0) / 100.0
+            final_score += loc_boost * ml_prob
+
             scored.append((disease, ml_prob, cov, final_score, sev))
 
-        # Sort by final smart score
         scored.sort(key=lambda x: x[3], reverse=True)
 
         predictions = []
-        for disease, ml_prob, cov, final_score, sev in scored[:7]:
-            if final_score < 0.005:
+        for disease, ml_prob, cov, final_score, sev in scored[:6]:
+            if final_score < 0.004:
                 continue
-            # Display probability: blend ML prob with coverage for realism
-            display_prob = round(min((ml_prob * 0.5 + cov * 0.5) * 100, 92), 1)
-            if display_prob < 5:
+            display_prob = round(min((ml_prob * 0.45 + cov * 0.55) * 100, 91), 1)
+            if display_prob < 6:
                 continue
             info = DISEASE_INFO.get(disease, {})
             dm   = disease_meta.get(disease, {})
@@ -421,42 +506,57 @@ def predict_disease():
                 "disease":          disease,
                 "probability":      display_prob,
                 "severity":         dm.get("severity", info.get("severity", "medium")),
-                "description":      info.get("description", dm.get("description", "")),
-                "common_medicines": dm.get("medicines",   info.get("common_medicines", ["Consult doctor"])),
-                "doctors":          dm.get("doctors",     info.get("doctors", ["General Physician"])),
+                "description":      info.get("description", ""),
+                "common_medicines": dm.get("medicines", info.get("common_medicines", ["Consult doctor"])),
+                "doctors":          dm.get("doctors",   info.get("doctors", ["General Physician"])),
                 "prevention":       info.get("prevention", []),
                 "emergency":        info.get("emergency", sev == "high"),
                 "symptom_match":    round(cov * 100),
+                "followup_questions": FOLLOWUP_QUESTIONS.get(disease, []),
             })
 
-        # Determine overall severity
-        severity = _get_overall_severity(predictions)
+        # ══════════════════════════════════════════════════
+        # IMPROVEMENT 4 — Emergency severity detection
+        # ══════════════════════════════════════════════════
+        EMERGENCY_SYMPTOMS = {
+            "Chest Pain", "Shortness of Breath", "Coughing Blood",
+            "Vomiting Blood", "Bloody Stool", "Paralysis",
+            "Slurred Speech", "Seizures", "Cyanosis", "Confusion",
+        }
+        has_emergency_symptom = bool(set(selected_symptoms) & EMERGENCY_SYMPTOMS)
+        is_emergency = (
+            has_emergency_symptom or
+            any(p.get("emergency", False) and p["probability"] > 28 for p in predictions[:2])
+        )
 
-        # Get all recommended doctors (deduped)
+        severity = _get_overall_severity(predictions)
+        if has_emergency_symptom:
+            severity = "high"
+
+        # ══════════════════════════════════════════════════
+        # IMPROVEMENT 5 — Medicines only from TOP disease
+        # ══════════════════════════════════════════════════
         all_doctors = []
         for p in predictions[:3]:
             for d in p.get("doctors", []):
                 if d not in all_doctors:
                     all_doctors.append(d)
 
-        # Get all medicines (deduped, top 3 predictions)
-        all_medicines = []
-        for p in predictions[:2]:
-            for m in p.get("common_medicines", []):
-                if m not in all_medicines:
-                    all_medicines.append(m)
-
-        # Emergency flag
-        is_emergency = any(p.get("emergency", False) and p["probability"] > 30 for p in predictions[:2])
+        # Only top disease medicines (not mixed from all)
+        top_medicines = []
+        if predictions:
+            top_medicines = predictions[0].get("common_medicines", [])[:6]
 
         return jsonify({
-            "predictions": predictions,
-            "overall_severity": severity,
-            "recommended_doctors": all_doctors[:4],
-            "recommended_medicines": all_medicines[:6],
-            "is_emergency": is_emergency,
-            "symptoms_analyzed": selected_symptoms,
-            "timestamp": datetime.now().isoformat(),
+            "predictions":           predictions,
+            "overall_severity":      severity,
+            "recommended_doctors":   all_doctors[:4],
+            "recommended_medicines": top_medicines,
+            "is_emergency":          is_emergency,
+            "symptoms_analyzed":     selected_symptoms,
+            "followup_questions":    predictions[0].get("followup_questions", []) if predictions else [],
+            "top_disease":           predictions[0]["disease"] if predictions else "",
+            "timestamp":             datetime.now().isoformat(),
         })
 
     except Exception as e:
@@ -515,17 +615,59 @@ def _rule_based_predict(symptoms, age, gender):
         "Appendicitis":         (["lower abdominal pain","fever","nausea"],     ["vomiting","loss of appetite"],   "high", False),
     }
 
+    # Improvement 1: Symptom weights
+    SYMPTOM_WEIGHTS = {
+        "Fever":0.8,"Chills":0.9,"Sweating":0.7,"Cough":0.75,
+        "Shortness of Breath":0.9,"Wheezing":0.92,"Chest Pain":0.92,
+        "Neck Stiffness":0.95,"Seizures":0.98,"Headache":0.6,
+        "Nausea":0.5,"Vomiting":0.65,"Diarrhea":0.7,
+        "Bloody Stool":0.95,"Fatigue":0.4,"Weakness":0.45,
+        "Joint Pain":0.65,"Skin Rash":0.7,"Itching":0.5,
+        "Loss of Smell":0.88,"Loss of Taste":0.88,
+    }
+    DEF_W = 0.55
+
+    # Improvement 3: India location boost
+    country = getattr(gender, '__class__', None)  # placeholder
+    INDIA_BOOST = {
+        "Malaria":10,"Dengue Fever":10,"Typhoid Fever":8,
+        "Flu (Influenza)":5,"Tuberculosis":7,
+    }
+
+    # Improvement 2: Follow-up questions
+    FOLLOWUP = {
+        "Malaria":           ["Have you been bitten by mosquitoes recently?",
+                              "Do you have cyclical fever every 2-3 days?"],
+        "Dengue Fever":      ["Do you have pain behind the eyes?",
+                              "Have you noticed red spots on skin?"],
+        "Typhoid Fever":     ["Have you had fever for more than 5 days?",
+                              "Is your fever worse in the evening?"],
+        "COVID-19":          ["Have you lost sense of smell or taste?",
+                              "Have you been in contact with COVID patient?"],
+        "Asthma":            ["Do symptoms worsen at night?",
+                              "Do you have history of allergies?"],
+        "UTI":               ["Is urine cloudy or foul-smelling?",
+                              "Do you feel lower abdominal pain?"],
+    }
+
     scores = {}
     for disease, (required, bonus, sev, common) in disease_rules.items():
-        req_match  = sum(1 for s in required if any(s in sym.lower() for sym in symptom_set))
-        bon_match  = sum(1 for s in bonus    if any(s in sym.lower() for sym in symptom_set))
-        if req_match == 0:
+        # Weighted matching
+        req_w = sum(SYMPTOM_WEIGHTS.get(s.title(), DEF_W)
+                    for s in required if any(s in sym.lower() for sym in symptom_set))
+        bon_w = sum(SYMPTOM_WEIGHTS.get(s.title(), DEF_W)
+                    for s in bonus    if any(s in sym.lower() for sym in symptom_set))
+        total_req_w = sum(SYMPTOM_WEIGHTS.get(s.title(), DEF_W) for s in required)
+        total_bon_w = sum(SYMPTOM_WEIGHTS.get(s.title(), DEF_W) for s in bonus) or 1.0
+
+        if req_w == 0:
             continue
-        req_ratio  = req_match / len(required)
-        bon_ratio  = bon_match / max(len(bonus), 1)
+
+        req_ratio  = req_w / max(total_req_w, 0.01)
+        bon_ratio  = bon_w / max(total_bon_w, 0.01)
         base_score = (req_ratio * 70) + (bon_ratio * 30)
 
-        # Penalise high-severity diseases when only 1-2 symptoms given
+        # Severity penalty
         if sev == "high" and n <= 2:
             base_score *= 0.3
         elif sev == "high" and n <= 3:
@@ -533,13 +675,20 @@ def _rule_based_predict(symptoms, age, gender):
         elif sev == "medium" and n <= 1:
             base_score *= 0.6
 
-        # Boost common diseases
         if common:
             base_score *= 1.2
+
+        # Location boost (India default)
+        base_score += INDIA_BOOST.get(disease, 0) * req_ratio
 
         scores[disease] = (base_score, sev)
 
     sorted_diseases = sorted(scores.items(), key=lambda x: x[1][0], reverse=True)[:6]
+
+    # Emergency symptoms check (Improvement 4)
+    EMERGENCY_SYMS = {"chest pain","shortness of breath","coughing blood",
+                      "vomiting blood","bloody stool","paralysis","seizures","cyanosis"}
+    has_emergency = bool(symptom_set & EMERGENCY_SYMS)
 
     predictions = []
     for disease, (score, sev) in sorted_diseases:
@@ -547,30 +696,35 @@ def _rule_based_predict(symptoms, age, gender):
             continue
         info = DISEASE_INFO.get(disease, {})
         predictions.append({
-            "disease": disease,
-            "probability": round(min(score, 88), 1),
-            "severity": sev,
-            "description": info.get("description", ""),
-            "common_medicines": info.get("common_medicines", ["Consult a doctor"]),
-            "doctors": info.get("doctors", ["General Physician"]),
-            "prevention": info.get("prevention", []),
-            "emergency": info.get("emergency", sev == "high"),
+            "disease":            disease,
+            "probability":        round(min(score, 88), 1),
+            "severity":           sev,
+            "description":        info.get("description", ""),
+            "common_medicines":   info.get("common_medicines", ["Consult a doctor"]),
+            "doctors":            info.get("doctors", ["General Physician"]),
+            "prevention":         info.get("prevention", []),
+            "emergency":          info.get("emergency", sev == "high"),
+            "followup_questions": FOLLOWUP.get(disease, []),
         })
 
-    severity = _get_overall_severity(predictions)
+    severity    = "high" if has_emergency else _get_overall_severity(predictions)
     all_doctors = list({d for p in predictions[:3] for d in p.get("doctors", [])})
-    all_medicines = list({m for p in predictions[:2] for m in p.get("common_medicines", [])})
-    is_emergency = any(p.get("emergency", False) for p in predictions[:2])
+    is_emergency = has_emergency or any(p.get("emergency") for p in predictions[:2])
+
+    # Improvement 5: medicines only from top disease
+    top_medicines = predictions[0].get("common_medicines", [])[:6] if predictions else []
 
     return jsonify({
-        "predictions": predictions,
-        "overall_severity": severity,
-        "recommended_doctors": all_doctors[:4],
-        "recommended_medicines": all_medicines[:6],
-        "is_emergency": is_emergency,
-        "symptoms_analyzed": symptoms,
-        "model": "rule_based",
-        "timestamp": datetime.now().isoformat(),
+        "predictions":           predictions,
+        "overall_severity":      severity,
+        "recommended_doctors":   all_doctors[:4],
+        "recommended_medicines": top_medicines,
+        "is_emergency":          is_emergency,
+        "symptoms_analyzed":     symptoms,
+        "followup_questions":    predictions[0].get("followup_questions", []) if predictions else [],
+        "top_disease":           predictions[0]["disease"] if predictions else "",
+        "model":                 "rule_based",
+        "timestamp":             datetime.now().isoformat(),
     })
 
 
