@@ -1,32 +1,3 @@
-"""
-CureHealth AI — Flask Backend
-═══════════════════════════════
-AI Chat  : Groq API (LLaMA 3.3 70B) — Ultra fast, FREE
-ML Model : Random Forest + Gradient Boosting Ensemble
-═══════════════════════════════
-
-Endpoints:
-  GET  /           → API info
-  GET  /health     → health check
-  GET  /symptoms   → all symptoms list
-  POST /predict    → disease prediction from symptoms
-  POST /chat       → Groq AI health chatbot
-  POST /report     → generate report data
-
-Setup:
-  pip install -r requirements.txt
-
-  Windows:
-    set GROQ_API_KEY=gsk_xxxxxxxxxxxx
-
-  Linux / Mac:
-    export GROQ_API_KEY=gsk_xxxxxxxxxxxx
-
-  Run:
-    python app.py
-
-Free Groq API Key → https://console.groq.com
-"""
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -34,668 +5,689 @@ import joblib
 import json
 import numpy as np
 import os
-import traceback
 from groq import Groq
 from datetime import datetime
+import traceback
 
 app = Flask(__name__)
 CORS(app)
 
-# ─────────────────────────────────────────────────────────────
-# ROOT
-# ─────────────────────────────────────────────────────────────
-@app.route("/")
-def root():
-    return jsonify({
-        "app":       "CureHealth AI Backend",
-        "version":   "2.0.0",
-        "status":    "running ✅",
-        "ai_engine": "Groq — llama-3.3-70b-versatile",
-        "endpoints": {
-            "GET  /health":   "API health check",
-            "GET  /symptoms": "Symptoms list",
-            "POST /predict":  "Disease prediction",
-            "POST /chat":     "Groq AI chatbot",
-            "POST /report":   "Report data",
-        }
-    })
-
-
-# ─────────────────────────────────────────────────────────────
-# ML MODELS
-# ─────────────────────────────────────────────────────────────
+# ─── Load ML Models ─────────────────────────────────────────
 MODEL_DIR = "models"
-rf_model = gb_model = label_encoder = metadata = None
+rf_model = None
+gb_model = None
+label_encoder = None
+metadata = None
 
 def load_models():
     global rf_model, gb_model, label_encoder, metadata
     try:
-        rf_model      = joblib.load(f"{MODEL_DIR}/rf_model.pkl")
-        gb_model      = joblib.load(f"{MODEL_DIR}/gb_model.pkl")
+        rf_model = joblib.load(f"{MODEL_DIR}/rf_model.pkl")
+        gb_model = joblib.load(f"{MODEL_DIR}/gb_model.pkl")
         label_encoder = joblib.load(f"{MODEL_DIR}/label_encoder.pkl")
         with open(f"{MODEL_DIR}/metadata.json") as f:
             metadata = json.load(f)
-        print("✅ ML Models loaded")
+        print("✅ Models loaded successfully")
     except Exception as e:
-        print(f"⚠️  ML Models not found — run train_model.py first\n   {e}")
+        print(f"⚠️  Models not found, run train_model.py first: {e}")
 
 load_models()
 
+# ─── Gemini Client ───────────────────────────────────────────
+# Get your FREE API key from: https://aistudio.google.com/app/apikey
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY")
+groq_client = Groq(api_key=GROQ_API_KEY)
+GROQ_MODEL  = "llama-3.3-70b-versatile"
 
-# ─────────────────────────────────────────────────────────────
-# GROQ CLIENT
-# Get free API key at: https://console.groq.com
-# ─────────────────────────────────────────────────────────────
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-groq_client  = Groq(api_key=GROQ_API_KEY)
-
-# Model options (pick one):
-#  "llama-3.3-70b-versatile"   ← Best quality  ✅ (recommended)
-#  "llama3-8b-8192"            ← Fastest / lightest
-#  "mixtral-8x7b-32768"        ← Good balance
-GROQ_MODEL = "llama-3.3-70b-versatile"
-
-
-# ─────────────────────────────────────────────────────────────
-# DISEASE DATABASE
-# ─────────────────────────────────────────────────────────────
+# ─── Disease Info Database ───────────────────────────────────
 DISEASE_INFO = {
     "Flu (Influenza)": {
         "severity": "medium",
-        "description": "A viral respiratory illness caused by influenza viruses affecting the nose, throat, and lungs.",
-        "common_medicines": ["Paracetamol", "Ibuprofen", "ORS", "Oseltamivir (Tamiflu — prescription)"],
+        "description": "A viral respiratory illness caused by influenza viruses.",
+        "common_medicines": ["Paracetamol", "Ibuprofen", "ORS", "Oseltamivir (Tamiflu)"],
         "doctors": ["General Physician"],
-        "prevention": ["Annual flu vaccine", "Frequent hand washing", "Avoid close contact with sick people", "Cover coughs and sneezes"],
+        "prevention": ["Annual flu vaccine", "Hand hygiene", "Avoid close contact with sick people"],
         "emergency": False,
     },
     "COVID-19": {
         "severity": "high",
-        "description": "Coronavirus disease caused by SARS-CoV-2, affecting the respiratory system.",
-        "common_medicines": ["Paracetamol", "ORS", "Vitamin C & D", "Doctor-prescribed antivirals"],
+        "description": "Coronavirus disease caused by SARS-CoV-2.",
+        "common_medicines": ["Paracetamol", "ORS", "Vitamin C", "Doctor-prescribed antivirals"],
         "doctors": ["General Physician", "Pulmonologist"],
-        "prevention": ["COVID vaccination", "Mask in crowded places", "Hand sanitization", "Ventilated spaces"],
+        "prevention": ["COVID vaccination", "Mask usage", "Hand sanitization", "Social distancing"],
         "emergency": True,
     },
     "Common Cold": {
         "severity": "low",
-        "description": "Mild viral infection of the upper respiratory tract, usually harmless.",
-        "common_medicines": ["Paracetamol", "Antihistamine", "Cough syrup", "Vitamin C", "Steam inhalation"],
+        "description": "Viral infection of the upper respiratory tract.",
+        "common_medicines": ["Paracetamol", "Antihistamine", "Cough syrup", "Vitamin C"],
         "doctors": ["General Physician"],
-        "prevention": ["Regular hand washing", "Avoid touching face", "Adequate sleep", "Stay hydrated"],
+        "prevention": ["Hand washing", "Avoid touching face", "Adequate sleep"],
         "emergency": False,
     },
     "Malaria": {
         "severity": "high",
-        "description": "Parasitic infection transmitted by the bite of infected Anopheles mosquitoes.",
-        "common_medicines": ["Chloroquine (prescription)", "Artemisinin-based combination therapy (prescription)"],
+        "description": "Parasitic infection transmitted through mosquito bites.",
+        "common_medicines": ["Chloroquine", "Artemisinin-based therapy (prescription only)"],
         "doctors": ["General Physician", "Infectious Disease Specialist"],
-        "prevention": ["Sleep under mosquito nets", "Use repellents (DEET)", "Prophylactic antimalarials when traveling", "Drain stagnant water"],
+        "prevention": ["Mosquito nets", "Repellents", "Prophylactic antimalarials when travelling"],
         "emergency": True,
     },
     "Dengue Fever": {
         "severity": "high",
-        "description": "Viral infection spread by Aedes mosquitoes, causing severe flu-like illness.",
-        "common_medicines": ["Paracetamol ONLY — NEVER use ibuprofen or aspirin", "ORS for hydration", "Papaya leaf extract"],
+        "description": "Viral infection spread by Aedes mosquitoes.",
+        "common_medicines": ["Paracetamol (NOT ibuprofen/aspirin)", "ORS", "Papaya leaf extract"],
         "doctors": ["General Physician", "Infectious Disease Specialist"],
-        "prevention": ["Eliminate stagnant water around home", "Use mosquito repellent", "Wear long sleeves", "Use mosquito nets"],
+        "prevention": ["Eliminate stagnant water", "Use mosquito repellent", "Wear full sleeves"],
         "emergency": True,
     },
     "Typhoid": {
         "severity": "high",
-        "description": "Bacterial infection caused by Salmonella typhi, spread through contaminated food and water.",
-        "common_medicines": ["Antibiotics — Ciprofloxacin or Azithromycin (prescription only)", "ORS", "Paracetamol for fever"],
+        "description": "Bacterial infection caused by Salmonella typhi.",
+        "common_medicines": ["Antibiotics (prescription)", "Paracetamol", "ORS"],
         "doctors": ["General Physician", "Gastroenterologist"],
-        "prevention": ["Typhoid vaccine", "Drink only safe/boiled water", "Avoid street food", "Proper hand hygiene"],
+        "prevention": ["Typhoid vaccine", "Safe food and water", "Hygiene"],
         "emergency": True,
     },
     "Pneumonia": {
         "severity": "high",
-        "description": "Infection that inflames air sacs in lungs, causing them to fill with fluid.",
-        "common_medicines": ["Antibiotics (prescription)", "Paracetamol", "Cough expectorant", "Rest and hydration"],
+        "description": "Lung infection causing air sacs to fill with fluid.",
+        "common_medicines": ["Antibiotics (prescription)", "Paracetamol", "Cough medicine"],
         "doctors": ["Pulmonologist", "General Physician"],
-        "prevention": ["Pneumococcal vaccine", "No smoking", "Good nutrition", "Avoid cold and damp environments"],
+        "prevention": ["Pneumonia vaccine", "No smoking", "Good nutrition"],
         "emergency": True,
     },
     "Tuberculosis": {
         "severity": "high",
-        "description": "Serious bacterial infection primarily affecting the lungs, spread through air.",
-        "common_medicines": ["DOTS therapy — 6 month course minimum (prescription only — never self-medicate)"],
+        "description": "Bacterial infection primarily affecting the lungs.",
+        "common_medicines": ["DOTS therapy (prescription only — 6 month course)"],
         "doctors": ["Pulmonologist", "Infectious Disease Specialist"],
-        "prevention": ["BCG vaccine at birth", "Ensure good ventilation", "Avoid prolonged contact with TB patients", "Test and treat contacts"],
+        "prevention": ["BCG vaccine", "Good ventilation", "Avoid prolonged contact with TB patients"],
         "emergency": True,
     },
     "Diabetes": {
         "severity": "high",
-        "description": "Chronic metabolic disorder where the body cannot properly regulate blood glucose.",
-        "common_medicines": ["Metformin (prescription)", "Insulin (prescription)", "Diet control", "Regular blood glucose monitoring"],
-        "doctors": ["Endocrinologist", "General Physician", "Diabetologist"],
-        "prevention": ["Healthy balanced diet", "Regular physical exercise", "Maintain healthy weight", "Avoid sugary beverages"],
+        "description": "Metabolic disorder affecting blood glucose regulation.",
+        "common_medicines": ["Metformin (prescription)", "Insulin (prescription)", "Diet control"],
+        "doctors": ["Endocrinologist", "General Physician"],
+        "prevention": ["Healthy diet", "Regular exercise", "Maintain healthy weight"],
         "emergency": False,
     },
     "Hypertension": {
         "severity": "high",
-        "description": "Persistently high blood pressure that can lead to heart disease and stroke.",
-        "common_medicines": ["Amlodipine (prescription)", "Losartan (prescription)", "ACE inhibitors (prescription)"],
+        "description": "Persistently elevated blood pressure in arteries.",
+        "common_medicines": ["Amlodipine (prescription)", "ACE inhibitors (prescription)"],
         "doctors": ["Cardiologist", "General Physician"],
-        "prevention": ["Low-sodium diet (DASH diet)", "Regular aerobic exercise", "Limit alcohol", "No smoking", "Stress management"],
+        "prevention": ["Low-salt diet", "Exercise", "Stress management", "Limit alcohol"],
         "emergency": False,
     },
     "Gastroenteritis": {
         "severity": "medium",
-        "description": "Inflammation of the stomach and intestines, usually from viral or bacterial infection.",
-        "common_medicines": ["ORS — most important", "Zinc supplements", "Probiotics", "Paracetamol for fever"],
+        "description": "Inflammation of stomach and intestines, often from infection.",
+        "common_medicines": ["ORS", "Zinc supplements", "Probiotics", "Paracetamol"],
         "doctors": ["Gastroenterologist", "General Physician"],
-        "prevention": ["Thorough hand washing before eating", "Food safety practices", "Safe drinking water", "Rotavirus vaccine for children"],
+        "prevention": ["Proper hand washing", "Food hygiene", "Safe drinking water"],
         "emergency": False,
     },
     "Food Poisoning": {
         "severity": "medium",
-        "description": "Illness caused by eating food contaminated with bacteria, viruses, or toxins.",
-        "common_medicines": ["ORS — stay hydrated", "Paracetamol for fever", "Avoid antidiarrheal drugs unless prescribed"],
+        "description": "Illness caused by consuming contaminated food or water.",
+        "common_medicines": ["ORS", "Antidiarrheal (adult only)", "Paracetamol"],
         "doctors": ["General Physician"],
-        "prevention": ["Cook food thoroughly", "Refrigerate perishables promptly", "Avoid raw/undercooked meat and eggs", "Wash hands before cooking"],
+        "prevention": ["Proper food handling", "Avoid raw/undercooked food", "Refrigerate food"],
         "emergency": False,
     },
     "Migraine": {
         "severity": "medium",
-        "description": "Neurological condition characterized by intense, recurrent headaches often with nausea.",
-        "common_medicines": ["Paracetamol or Ibuprofen at onset", "Sumatriptan (prescription)", "Anti-nausea medication", "Rest in dark quiet room"],
+        "description": "Neurological condition causing severe recurring headaches.",
+        "common_medicines": ["Paracetamol", "Ibuprofen", "Sumatriptan (prescription)", "Rest in dark room"],
         "doctors": ["Neurologist"],
-        "prevention": ["Identify and avoid personal triggers", "Maintain regular sleep schedule", "Stay hydrated", "Manage stress", "Limit caffeine"],
+        "prevention": ["Identify and avoid triggers", "Regular sleep", "Stress management"],
         "emergency": False,
     },
     "Asthma": {
         "severity": "high",
-        "description": "Chronic condition causing airway inflammation and narrowing, making breathing difficult.",
-        "common_medicines": ["Salbutamol reliever inhaler (prescription)", "Corticosteroid preventer inhaler (prescription)", "Never stop medication without doctor advice"],
+        "description": "Chronic condition causing airway inflammation and breathing difficulty.",
+        "common_medicines": ["Salbutamol inhaler (prescription)", "Corticosteroids (prescription)"],
         "doctors": ["Pulmonologist", "Allergist"],
-        "prevention": ["Identify and avoid triggers (dust, pollen, smoke)", "Air purifier at home", "Strict medication adherence", "Annual flu vaccine"],
+        "prevention": ["Avoid allergens", "Air purifier", "Medication compliance"],
         "emergency": True,
     },
     "Sinusitis": {
         "severity": "low",
-        "description": "Inflammation of the sinuses, often following a cold or allergic reaction.",
-        "common_medicines": ["Saline nasal rinse (Neti pot)", "Decongestant spray (max 3 days)", "Paracetamol for pain", "Steam inhalation"],
+        "description": "Inflammation of the sinuses, often following a cold.",
+        "common_medicines": ["Decongestants", "Nasal saline rinse", "Paracetamol", "Antihistamine"],
         "doctors": ["ENT Specialist", "General Physician"],
-        "prevention": ["Treat allergies promptly", "Use humidifier", "Avoid smoking and pollutants", "Stay hydrated"],
+        "prevention": ["Treat allergies promptly", "Humidifier use", "Avoid irritants"],
         "emergency": False,
     },
     "Urinary Tract Infection": {
         "severity": "medium",
-        "description": "Bacterial infection in any part of the urinary system — kidneys, bladder, or urethra.",
-        "common_medicines": ["Antibiotics — Nitrofurantoin or Trimethoprim (prescription)", "Drink 8+ glasses of water daily", "Cranberry juice may help"],
+        "description": "Bacterial infection in the urinary system.",
+        "common_medicines": ["Antibiotics (prescription)", "Cranberry juice", "Increased water intake"],
         "doctors": ["Urologist", "General Physician"],
-        "prevention": ["Drink plenty of water", "Urinate frequently, don't hold", "Proper hygiene", "Urinate after intercourse"],
+        "prevention": ["Stay hydrated", "Proper hygiene", "Urinate after intercourse"],
         "emergency": False,
     },
     "Jaundice": {
         "severity": "high",
-        "description": "Yellowing of skin and eyes due to elevated bilirubin, indicating liver dysfunction.",
-        "common_medicines": ["Treatment depends on cause — see doctor immediately", "Rest", "Adequate hydration", "Avoid alcohol completely"],
-        "doctors": ["Gastroenterologist", "Hepatologist", "General Physician"],
-        "prevention": ["Hepatitis A and B vaccination", "Avoid alcohol", "Safe food and drinking water", "Avoid sharing needles"],
+        "description": "Yellowing of skin and eyes due to liver dysfunction.",
+        "common_medicines": ["Rest", "Adequate hydration", "Liver support supplements (prescription)"],
+        "doctors": ["Gastroenterologist", "Hepatologist"],
+        "prevention": ["Hepatitis vaccination", "Avoid alcohol", "Safe food/water"],
         "emergency": True,
     },
     "Chickenpox": {
         "severity": "medium",
-        "description": "Highly contagious viral infection causing an itchy blister rash all over the body.",
-        "common_medicines": ["Calamine lotion for itching", "Antihistamine (Cetirizine)", "Paracetamol — AVOID ibuprofen", "Acyclovir for severe cases (prescription)"],
+        "description": "Highly contagious viral infection causing itchy blister rash.",
+        "common_medicines": ["Calamine lotion", "Antihistamine", "Paracetamol (NOT aspirin for children)"],
         "doctors": ["General Physician", "Dermatologist"],
-        "prevention": ["Varicella vaccine (very effective)", "Avoid contact with infected individuals", "Good hygiene"],
+        "prevention": ["Varicella vaccine", "Avoid contact with infected persons"],
+        "emergency": False,
+    },
+    "Psoriasis": {
+        "severity": "medium",
+        "description": "Chronic skin condition causing scaly patches.",
+        "common_medicines": ["Topical corticosteroids (prescription)", "Moisturizers", "Vitamin D creams"],
+        "doctors": ["Dermatologist"],
+        "prevention": ["Avoid triggers", "Stress management", "Moisturize regularly"],
         "emergency": False,
     },
     "Allergy": {
         "severity": "low",
-        "description": "Immune system overreaction to normally harmless substances (allergens).",
-        "common_medicines": ["Cetirizine or Loratadine (antihistamine)", "Nasal corticosteroid spray", "Eye drops for allergic conjunctivitis", "Epinephrine for severe reactions (prescription)"],
-        "doctors": ["Allergist", "ENT Specialist", "Dermatologist"],
-        "prevention": ["Identify specific allergens via testing", "HEPA air purifier", "Hypoallergenic bedding", "Avoid outdoor activity during high pollen"],
+        "description": "Immune system reaction to allergens (pollen, dust, food, etc.).",
+        "common_medicines": ["Antihistamine (Cetirizine/Loratadine)", "Nasal steroids", "Eye drops"],
+        "doctors": ["Allergist", "ENT Specialist"],
+        "prevention": ["Identify and avoid allergens", "Air purifier", "HEPA filter"],
         "emergency": False,
     },
     "Arthritis": {
         "severity": "medium",
-        "description": "Inflammation of one or more joints causing persistent pain, stiffness, and reduced mobility.",
-        "common_medicines": ["Ibuprofen or Naproxen for pain", "Paracetamol", "DMARDs for rheumatoid arthritis (prescription)", "Topical pain relief gels"],
+        "description": "Inflammation of one or more joints causing pain and stiffness.",
+        "common_medicines": ["Ibuprofen", "Paracetamol", "DMARDs (prescription)"],
         "doctors": ["Rheumatologist", "Orthopedist"],
-        "prevention": ["Regular low-impact exercise", "Maintain healthy weight", "Protect joints during activity", "Calcium and Vitamin D intake"],
+        "prevention": ["Regular exercise", "Maintain healthy weight", "Joint protection"],
         "emergency": False,
     },
     "Hypothyroidism": {
         "severity": "medium",
-        "description": "Underactive thyroid gland that doesn't produce enough hormones, slowing metabolism.",
-        "common_medicines": ["Levothyroxine (prescription — take consistently)", "Regular TSH monitoring"],
-        "doctors": ["Endocrinologist", "General Physician"],
-        "prevention": ["Adequate iodine in diet", "Regular thyroid screening especially for women over 35", "Avoid goitrogenic foods in excess"],
+        "description": "Underactive thyroid gland not producing enough hormones.",
+        "common_medicines": ["Levothyroxine (prescription)"],
+        "doctors": ["Endocrinologist"],
+        "prevention": ["Regular thyroid screening", "Adequate iodine intake"],
         "emergency": False,
     },
     "Anaemia": {
         "severity": "medium",
-        "description": "Deficiency of red blood cells or haemoglobin, reducing oxygen delivery to body tissues.",
-        "common_medicines": ["Iron supplements with Vitamin C (enhances absorption)", "Vitamin B12 injections if deficient", "Folic acid supplements"],
+        "description": "Deficiency of red blood cells or haemoglobin.",
+        "common_medicines": ["Iron supplements", "Vitamin B12", "Folic acid", "Diet rich in iron"],
         "doctors": ["General Physician", "Haematologist"],
-        "prevention": ["Iron-rich diet (leafy greens, meat, legumes)", "Vitamin C with meals", "Regular blood tests", "Treat underlying causes"],
+        "prevention": ["Iron-rich diet", "Vitamin C with iron food", "Regular checkups"],
         "emergency": False,
     },
     "Heart Disease": {
         "severity": "high",
-        "description": "Umbrella term for conditions affecting the heart's structure and function.",
-        "common_medicines": ["Medications vary by condition — follow cardiologist's prescription strictly", "NEVER self-medicate for heart conditions"],
-        "doctors": ["Cardiologist", "Cardiac Surgeon"],
-        "prevention": ["Heart-healthy diet (Mediterranean diet)", "Regular aerobic exercise", "No smoking", "Control blood pressure, cholesterol, and diabetes"],
-        "emergency": True,
-    },
-    "Stroke": {
-        "severity": "high",
-        "description": "Medical emergency where blood supply to brain is cut off, causing brain cells to die rapidly.",
-        "common_medicines": ["EMERGENCY — call 112 immediately", "tPA clot-busting drug (within 4.5 hours — hospital only)", "Aspirin after hospital assessment"],
-        "doctors": ["Neurologist", "Emergency Medicine Specialist"],
-        "prevention": ["Control hypertension and diabetes", "No smoking", "Regular exercise", "Healthy diet", "Limit alcohol"],
+        "description": "Various conditions affecting heart structure and function.",
+        "common_medicines": ["As prescribed by cardiologist — do not self-medicate"],
+        "doctors": ["Cardiologist"],
+        "prevention": ["Heart-healthy diet", "Regular exercise", "No smoking", "Stress management"],
         "emergency": True,
     },
     "Meningitis": {
         "severity": "high",
-        "description": "Serious inflammation of the membranes surrounding the brain and spinal cord.",
-        "common_medicines": ["EMERGENCY IV antibiotics or antivirals (hospital only)", "Do not delay — seek emergency care immediately"],
-        "doctors": ["Neurologist", "Infectious Disease Specialist", "Emergency Medicine"],
-        "prevention": ["Meningococcal and pneumococcal vaccines", "Good respiratory hygiene", "Avoid sharing drinks/utensils"],
+        "description": "Inflammation of the membranes surrounding the brain and spinal cord.",
+        "common_medicines": ["Antibiotics/antivirals (prescription — emergency)", "Corticosteroids"],
+        "doctors": ["Neurologist", "Infectious Disease Specialist"],
+        "prevention": ["Meningitis vaccine", "Good hygiene", "Avoid sharing utensils"],
+        "emergency": True,
+    },
+    "Stroke": {
+        "severity": "high",
+        "description": "Brain cell death due to interrupted blood supply — EMERGENCY.",
+        "common_medicines": ["tPA (clot buster — emergency)", "Aspirin (as directed)"],
+        "doctors": ["Neurologist", "Emergency Medicine"],
+        "prevention": ["Control BP/cholesterol", "No smoking", "Regular exercise"],
         "emergency": True,
     },
     "Depression": {
         "severity": "medium",
-        "description": "Common mental health disorder causing persistent sadness, loss of interest, and difficulty functioning.",
-        "common_medicines": ["SSRIs — Fluoxetine, Sertraline (prescription)", "SNRIs (prescription)", "Psychotherapy is equally important"],
-        "doctors": ["Psychiatrist", "Psychologist", "Counselor"],
-        "prevention": ["Maintain social connections", "Regular exercise (proven effective)", "Adequate sleep", "Mindfulness and therapy", "Limit alcohol"],
+        "description": "Mood disorder causing persistent sadness and loss of interest.",
+        "common_medicines": ["SSRIs (prescription)", "Therapy", "Lifestyle changes"],
+        "doctors": ["Psychiatrist", "Psychologist"],
+        "prevention": ["Social connections", "Exercise", "Therapy", "Adequate sleep"],
         "emergency": False,
     },
     "Appendicitis": {
         "severity": "high",
-        "description": "Inflammation of the appendix requiring urgent surgical treatment.",
-        "common_medicines": ["EMERGENCY — requires surgical removal (appendectomy)", "IV antibiotics pre-surgery"],
+        "description": "Inflammation of the appendix — may require surgery.",
+        "common_medicines": ["Surgical intervention (appendectomy)", "IV antibiotics"],
         "doctors": ["General Surgeon", "Emergency Medicine"],
-        "prevention": ["High-fiber diet may reduce risk", "No proven prevention — seek care at first sign of severe right lower abdominal pain"],
+        "prevention": ["High-fiber diet"],
         "emergency": True,
     },
     "Kidney Disease": {
         "severity": "high",
-        "description": "Progressive loss of kidney function, affecting the body's ability to filter waste.",
-        "common_medicines": ["Depends on cause — see nephrologist", "Blood pressure medications to slow progression", "Dietary restrictions"],
-        "doctors": ["Nephrologist", "General Physician"],
-        "prevention": ["Stay well hydrated", "Control blood pressure and diabetes strictly", "Avoid overuse of NSAIDs (ibuprofen)", "Regular kidney function tests"],
+        "description": "Progressive loss of kidney function.",
+        "common_medicines": ["Medication depends on cause (prescription)", "Diet control"],
+        "doctors": ["Nephrologist"],
+        "prevention": ["Stay hydrated", "Control blood pressure/diabetes", "Avoid NSAIDs overuse"],
         "emergency": False,
     },
 }
 
-
-# ─────────────────────────────────────────────────────────────
-# HELPER FUNCTIONS
-# ─────────────────────────────────────────────────────────────
-
-def get_overall_severity(predictions):
-    if not predictions:
-        return "low"
-    top = predictions[0]
-    if top.get("severity") == "high" and top["probability"] > 40:
-        return "high"
-    if top.get("severity") in ["high", "medium"] and top["probability"] > 25:
-        return "medium"
-    return "low"
-
-
-def rule_based_predict(symptoms):
-    """Fallback when ML model is not loaded."""
-    rules = {
-        "Flu (Influenza)":     ["fever", "cough", "headache", "body aches", "fatigue", "chills", "sore throat"],
-        "COVID-19":            ["fever", "cough", "fatigue", "shortness of breath", "loss of appetite", "body aches"],
-        "Common Cold":         ["runny nose", "sore throat", "cough", "headache", "sneezing"],
-        "Malaria":             ["fever", "chills", "headache", "sweating", "nausea", "body aches", "fatigue"],
-        "Dengue Fever":        ["fever", "headache", "rash", "body aches", "nausea", "vomiting", "fatigue"],
-        "Typhoid":             ["fever", "stomach pain", "headache", "fatigue", "loss of appetite", "nausea"],
-        "Migraine":            ["headache", "nausea", "vomiting", "blurred vision", "dizziness"],
-        "Gastroenteritis":     ["nausea", "vomiting", "diarrhea", "stomach pain", "fever", "dehydration"],
-        "Food Poisoning":      ["nausea", "vomiting", "diarrhea", "stomach pain"],
-        "Allergy":             ["itching", "runny nose", "rash", "sneezing", "swelling"],
-        "Asthma":              ["shortness of breath", "cough", "chest pain", "wheezing"],
-        "Urinary Tract Infection": ["frequent urination", "dark urine", "fever", "stomach pain"],
-        "Anaemia":             ["fatigue", "dizziness", "shortness of breath", "muscle weakness"],
-        "Sinusitis":           ["headache", "runny nose", "sore throat", "ear pain"],
-        "Jaundice":            ["yellowing skin", "dark urine", "fatigue", "loss of appetite", "stomach pain"],
-        "Hypertension":        ["headache", "dizziness", "palpitations", "blurred vision"],
-        "Depression":          ["fatigue", "anxiety", "depression", "loss of appetite", "weight loss"],
-    }
-    syms_lower = {s.lower() for s in symptoms}
-    scores = {}
-    for disease, rule_syms in rules.items():
-        match = sum(1 for s in rule_syms if any(s in sym for sym in syms_lower))
-        if match > 0:
-            scores[disease] = round((match / len(rule_syms)) * 100, 1)
-
-    predictions = []
-    for disease, score in sorted(scores.items(), key=lambda x: x[1], reverse=True)[:5]:
-        if score < 5:
-            continue
-        info = DISEASE_INFO.get(disease, {})
-        predictions.append({
-            "disease":          disease,
-            "probability":      round(min(score, 90), 1),
-            "severity":         info.get("severity", "medium"),
-            "description":      info.get("description", ""),
-            "common_medicines": info.get("common_medicines", []),
-            "doctors":          info.get("doctors", ["General Physician"]),
-            "prevention":       info.get("prevention", []),
-            "emergency":        info.get("emergency", False),
-        })
-    return predictions
-
-
-# ─────────────────────────────────────────────────────────────
-# ROUTES
-# ─────────────────────────────────────────────────────────────
+# ─── Routes ──────────────────────────────────────────────────
 
 @app.route("/health", methods=["GET"])
 def health_check():
     return jsonify({
-        "status":       "ok ✅",
-        "ai_engine":    f"Groq — {GROQ_MODEL}",
+        "status": "ok",
         "models_loaded": rf_model is not None,
-        "groq_key_set": GROQ_API_KEY != "YOUR_GROQ_API_KEY",
-        "diseases":     len(DISEASE_INFO),
-        "timestamp":    datetime.now().isoformat(),
+        "diseases_count": len(DISEASE_INFO),
+        "timestamp": datetime.now().isoformat()
     })
 
 
 @app.route("/symptoms", methods=["GET"])
 def get_symptoms():
+    """Return all selectable symptoms grouped by category."""
     symptoms = [
-        {"id": i, "name": n, "icon": ic, "category": c}
-        for i, (n, ic, c) in enumerate([
-            ("Fever",               "🌡️", "general"),
-            ("Headache",            "🤕", "neuro"),
-            ("Cough",               "😷", "respiratory"),
-            ("Sore Throat",         "🤧", "respiratory"),
-            ("Runny Nose",          "👃", "respiratory"),
-            ("Fatigue",             "😴", "general"),
-            ("Body Aches",          "🦴", "general"),
-            ("Nausea",              "🤢", "digestive"),
-            ("Vomiting",            "🤮", "digestive"),
-            ("Diarrhea",            "💊", "digestive"),
-            ("Chest Pain",          "💗", "cardiac"),
-            ("Shortness of Breath", "😤", "respiratory"),
-            ("Dizziness",           "😵", "neuro"),
-            ("Rash",                "🔴", "skin"),
-            ("Itching",             "🖐️", "skin"),
-            ("Stomach Pain",        "🫃", "digestive"),
-            ("Loss of Appetite",    "🍽️", "digestive"),
-            ("Chills",              "🥶", "general"),
-            ("Sweating",            "💦", "general"),
-            ("Blurred Vision",      "👁️", "neuro"),
-            ("Ear Pain",            "👂", "general"),
-            ("Weight Loss",         "⚖️", "general"),
-            ("Swelling",            "🫸", "general"),
-            ("Palpitations",        "💓", "cardiac"),
-            ("Anxiety",             "😰", "mental"),
-            ("Constipation",        "😣", "digestive"),
-            ("Dark Urine",          "🫙", "urinary"),
-            ("Yellowing Skin",      "🟡", "skin"),
-            ("Neck Stiffness",      "🧍", "neuro"),
-            ("Acidity",             "🔥", "digestive"),
-            ("Dehydration",         "💧", "general"),
-            ("Frequent Urination",  "🚽", "urinary"),
-            ("Muscle Weakness",     "💪", "general"),
-            ("Joint Stiffness",     "🦵", "general"),
-            ("Skin Peeling",        "🧴", "skin"),
-            ("Depression",          "😔", "mental"),
+        {"id": i, "name": name, "icon": icon, "category": cat}
+        for i, (name, icon, cat) in enumerate([
+            ("Fever", "🌡️", "general"), ("Headache", "🤕", "neuro"),
+            ("Cough", "😷", "respiratory"), ("Sore Throat", "🤧", "respiratory"),
+            ("Runny Nose", "👃", "respiratory"), ("Fatigue", "😴", "general"),
+            ("Body Aches", "🦴", "general"), ("Nausea", "🤢", "digestive"),
+            ("Vomiting", "🤮", "digestive"), ("Diarrhea", "💊", "digestive"),
+            ("Chest Pain", "💗", "cardiac"), ("Shortness of Breath", "😤", "respiratory"),
+            ("Dizziness", "😵", "neuro"), ("Rash", "🔴", "skin"),
+            ("Itching", "🖐️", "skin"), ("Stomach Pain", "🫃", "digestive"),
+            ("Loss of Appetite", "🍽️", "digestive"), ("Chills", "🥶", "general"),
+            ("Sweating", "💦", "general"), ("Blurred Vision", "👁️", "neuro"),
+            ("Ear Pain", "👂", "general"), ("Weight Loss", "⚖️", "general"),
+            ("Swelling", "🫸", "general"), ("Palpitations", "💓", "cardiac"),
+            ("Anxiety", "😰", "mental"), ("Constipation", "😣", "digestive"),
+            ("Dark Urine", "🫙", "urinary"), ("Yellowing Skin", "🟡", "skin"),
+            ("Neck Stiffness", "🧍", "neuro"), ("Acidity", "🔥", "digestive"),
+            ("Dehydration", "💧", "general"), ("Frequent Urination", "🚽", "urinary"),
+            ("Muscle Weakness", "💪", "general"), ("Joint Stiffness", "🦵", "general"),
+            ("Skin Peeling", "🫁", "skin"), ("Depression", "😔", "mental"),
         ])
     ]
     categories = {
-        "general":     {"label": "General",       "color": "#00E5C3"},
-        "respiratory": {"label": "Respiratory",   "color": "#4C9EFF"},
-        "digestive":   {"label": "Digestive",     "color": "#00D4AA"},
-        "neuro":       {"label": "Neurological",  "color": "#B06EFF"},
-        "cardiac":     {"label": "Cardiac",       "color": "#FF3B3B"},
-        "skin":        {"label": "Skin",          "color": "#F5A623"},
-        "urinary":     {"label": "Urinary",       "color": "#00D4FF"},
-        "mental":      {"label": "Mental Health", "color": "#FF6B9D"},
+        "general": {"label": "General", "color": "#1B6CA8"},
+        "respiratory": {"label": "Respiratory", "color": "#2D9CDB"},
+        "digestive": {"label": "Digestive", "color": "#27AE60"},
+        "neuro": {"label": "Neurological", "color": "#9B51E0"},
+        "cardiac": {"label": "Cardiac", "color": "#EB5757"},
+        "skin": {"label": "Skin", "color": "#F2994A"},
+        "urinary": {"label": "Urinary", "color": "#F9C74F"},
+        "mental": {"label": "Mental Health", "color": "#6C757D"},
     }
-    return jsonify({"symptoms": symptoms, "categories": categories, "total": len(symptoms)})
+    return jsonify({"symptoms": symptoms, "categories": categories})
 
 
 @app.route("/predict", methods=["POST"])
 def predict_disease():
     """
     Predict diseases from selected symptoms.
-
-    Request body:
-    {
-        "symptoms": ["Fever", "Cough", "Headache"],
-        "age": 25,        (optional)
-        "gender": "male"  (optional)
-    }
+    Body: { "symptoms": ["Fever", "Headache", "Cough"], "age": 30, "gender": "male" }
     """
     try:
         data = request.get_json()
-        if not data:
-            return jsonify({"error": "Invalid JSON body"}), 400
-
         selected_symptoms = data.get("symptoms", [])
+        age = data.get("age", 25)
+        gender = data.get("gender", "unknown")
+
         if not selected_symptoms:
-            return jsonify({"error": "No symptoms provided. Please select at least one symptom."}), 400
+            return jsonify({"error": "No symptoms provided"}), 400
 
-        # ── ML Model prediction ────────────────────────────
-        if rf_model is not None:
-            features       = metadata["features"]
-            feature_vector = [1 if f in selected_symptoms else 0 for f in features]
-            X              = np.array([feature_vector])
-            rf_proba       = rf_model.predict_proba(X)[0]
-            gb_proba       = gb_model.predict_proba(X)[0]
-            ensemble_proba = 0.6 * rf_proba + 0.4 * gb_proba   # 60% RF + 40% GB
-            top_indices    = np.argsort(ensemble_proba)[::-1][:5]
-            diseases       = label_encoder.classes_
+        if rf_model is None:
+            # Fallback: rule-based prediction when model not trained
+            return _rule_based_predict(selected_symptoms, age, gender)
 
-            predictions = []
-            for idx in top_indices:
-                disease = diseases[idx]
-                prob    = float(ensemble_proba[idx])
-                if prob < 0.03:
-                    continue
-                info = DISEASE_INFO.get(disease, {})
-                predictions.append({
-                    "disease":          disease,
-                    "probability":      round(prob * 100, 1),
-                    "severity":         info.get("severity", "medium"),
-                    "description":      info.get("description", ""),
-                    "common_medicines": info.get("common_medicines", []),
-                    "doctors":          info.get("doctors", ["General Physician"]),
-                    "prevention":       info.get("prevention", []),
-                    "emergency":        info.get("emergency", False),
-                })
-        else:
-            # ── Rule-based fallback ─────────────────────────
-            predictions = rule_based_predict(selected_symptoms)
+        # Build feature vector
+        features = metadata["features"]
+        feature_vector = [1 if f in selected_symptoms else 0 for f in features]
+        X = np.array([feature_vector])
 
-        if not predictions:
-            predictions = [{
-                "disease":          "Unspecified Condition",
-                "probability":      50.0,
-                "severity":         "medium",
-                "description":      "Unable to determine specific condition. Please consult a doctor.",
-                "common_medicines": ["Consult a doctor for appropriate medication"],
-                "doctors":          ["General Physician"],
-                "prevention":       ["Maintain healthy lifestyle", "Stay hydrated", "Get adequate rest"],
-                "emergency":        False,
-            }]
+        # Ensemble prediction
+        rf_proba = rf_model.predict_proba(X)[0]
+        gb_proba = gb_model.predict_proba(X)[0]
+        ensemble_proba = (0.6 * rf_proba + 0.4 * gb_proba)
 
-        severity     = get_overall_severity(predictions)
-        all_doctors  = list({d for p in predictions[:3] for d in p.get("doctors", [])})
-        all_meds     = list({m for p in predictions[:2] for m in p.get("common_medicines", [])})
-        is_emergency = any(p.get("emergency") and p["probability"] > 30 for p in predictions[:2])
+        # ── Smart Scoring: penalise rare/serious if few symptoms ──
+        n_symptoms = len(selected_symptoms)
+        disease_symptom_map = metadata.get("user_symptom_map", {})
+        disease_meta = metadata.get("disease_metadata", {})
 
-        return jsonify({
-            "predictions":           predictions,
-            "overall_severity":      severity,
-            "recommended_doctors":   all_doctors[:4],
-            "recommended_medicines": all_meds[:6],
-            "is_emergency":          is_emergency,
-            "symptoms_analyzed":     selected_symptoms,
-            "model_used":            "ensemble_ml" if rf_model else "rule_based",
-            "timestamp":             datetime.now().isoformat(),
-        })
+        # Build symptom→disease coverage map
+        from train_model import DISEASE_SYMPTOM_MAP as DSM
 
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
+        def coverage_score(disease_name, selected):
+            """How many selected symptoms match this disease (normalised)."""
+            all_syms = DSM.get(disease_name, [])
+            sym_map  = metadata.get("user_symptom_map", {})
+            matched  = 0
+            for sel in selected:
+                internal = sym_map.get(sel, [sel.lower()])
+                if any(iv in all_syms for iv in internal):
+                    matched += 1
+            return matched / max(len(selected), 1)
 
+        diseases = label_encoder.classes_
+        top_indices = np.argsort(ensemble_proba)[::-1][:15]  # grab more candidates
 
-@app.route("/chat", methods=["POST"])
-def chat():
-    """
-    Groq AI Health Chatbot — LLaMA 3.3 70B
-
-    Request body:
-    {
-        "message": "What to do for fever?",
-        "history": [
-            {"role": "user",      "content": "I have a headache"},
-            {"role": "assistant", "content": "..."}
-        ],
-        "context": {
-            "symptoms":    ["Fever", "Cough"],
-            "top_disease": "Flu"
-        }
-    }
-    """
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "Invalid JSON body"}), 400
-
-        user_message = data.get("message", "").strip()
-        history      = data.get("history", [])
-        context      = data.get("context", {})
-
-        if not user_message:
-            return jsonify({"error": "No message provided"}), 400
-
-        # ── System Prompt ──────────────────────────────────
-        system_prompt = """You are CureHealth AI — a knowledgeable, empathetic medical health assistant.
-
-Your responsibilities:
-- Provide accurate, evidence-based health information
-- Help users understand symptoms, conditions, medications, and wellness
-- Always recommend consulting a qualified doctor for diagnosis or treatment
-- For emergencies (chest pain, difficulty breathing, stroke symptoms, severe bleeding) IMMEDIATELY advise calling 112 (India) or 911 (US)
-- Never give definitive medical diagnoses — use phrases like "may suggest", "could indicate", "commonly associated with"
-- Keep responses clear, concise, and actionable
-- Respond in the same language the user writes in (Hindi or English)
-
-Response format (use emojis for clarity):
-🔍 Key information
-💊 Medication notes (general guidance only — always say "consult your doctor")
-✅ Actionable steps / home care
-⚠️ Warning signs — when to seek immediate care
-
-Tone: Professional yet warm. Like a knowledgeable friend who happens to be a doctor."""
-
-        # Add patient context if available
-        if context.get("symptoms"):
-            system_prompt += f"\n\n📋 Patient's reported symptoms: {', '.join(context['symptoms'])}"
-        if context.get("top_disease"):
-            system_prompt += f"\n🧬 AI's top predicted condition: {context['top_disease']}"
-
-        # ── Build Messages (OpenAI-compatible format) ──────
-        messages = [{"role": "system", "content": system_prompt}]
-
-        # Add conversation history (last 10 messages)
-        for msg in history[-10:]:
-            role = msg.get("role", "user")
-            if role == "model":
-                role = "assistant"      # Gemini format → OpenAI format
-            if role not in ["user", "assistant"]:
+        scored = []
+        for idx in top_indices:
+            disease = diseases[idx]
+            ml_prob  = float(ensemble_proba[idx])
+            if ml_prob < 0.01:
                 continue
-            messages.append({"role": role, "content": msg.get("content", "")})
 
-        # Add current user message
-        messages.append({"role": "user", "content": user_message})
+            cov  = coverage_score(disease, selected_symptoms)
+            meta = disease_meta.get(disease, {})
+            sev  = meta.get("severity", "medium")
 
-        # ── Call Groq API ──────────────────────────────────
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=messages,
-            max_tokens=800,
-            temperature=0.7,
-            top_p=0.9,
-        )
+            # Severity penalty: high-severity diseases need stronger symptom match
+            sev_penalty = 1.0
+            if sev == "high"   and cov < 0.5 and n_symptoms <= 3:
+                sev_penalty = 0.35   # heavily penalise rare-disease if few symptoms
+            elif sev == "high"  and cov < 0.4:
+                sev_penalty = 0.55
+            elif sev == "medium" and cov < 0.3:
+                sev_penalty = 0.75
 
-        reply = response.choices[0].message.content
+            # Common/low diseases get a small boost when symptoms fully match
+            if sev == "low" and cov >= 0.6:
+                sev_penalty = 1.15
+
+            final_score = ml_prob * cov * sev_penalty
+            scored.append((disease, ml_prob, cov, final_score, sev))
+
+        # Sort by final smart score
+        scored.sort(key=lambda x: x[3], reverse=True)
+
+        predictions = []
+        for disease, ml_prob, cov, final_score, sev in scored[:7]:
+            if final_score < 0.005:
+                continue
+            # Display probability: blend ML prob with coverage for realism
+            display_prob = round(min((ml_prob * 0.5 + cov * 0.5) * 100, 92), 1)
+            if display_prob < 5:
+                continue
+            info = DISEASE_INFO.get(disease, {})
+            dm   = disease_meta.get(disease, {})
+            predictions.append({
+                "disease":          disease,
+                "probability":      display_prob,
+                "severity":         dm.get("severity", info.get("severity", "medium")),
+                "description":      info.get("description", dm.get("description", "")),
+                "common_medicines": dm.get("medicines",   info.get("common_medicines", ["Consult doctor"])),
+                "doctors":          dm.get("doctors",     info.get("doctors", ["General Physician"])),
+                "prevention":       info.get("prevention", []),
+                "emergency":        info.get("emergency", sev == "high"),
+                "symptom_match":    round(cov * 100),
+            })
+
+        # Determine overall severity
+        severity = _get_overall_severity(predictions)
+
+        # Get all recommended doctors (deduped)
+        all_doctors = []
+        for p in predictions[:3]:
+            for d in p.get("doctors", []):
+                if d not in all_doctors:
+                    all_doctors.append(d)
+
+        # Get all medicines (deduped, top 3 predictions)
+        all_medicines = []
+        for p in predictions[:2]:
+            for m in p.get("common_medicines", []):
+                if m not in all_medicines:
+                    all_medicines.append(m)
+
+        # Emergency flag
+        is_emergency = any(p.get("emergency", False) and p["probability"] > 30 for p in predictions[:2])
 
         return jsonify({
-            "reply":     reply,
-            "model":     GROQ_MODEL,
+            "predictions": predictions,
+            "overall_severity": severity,
+            "recommended_doctors": all_doctors[:4],
+            "recommended_medicines": all_medicines[:6],
+            "is_emergency": is_emergency,
+            "symptoms_analyzed": selected_symptoms,
             "timestamp": datetime.now().isoformat(),
         })
 
     except Exception as e:
         traceback.print_exc()
-        # Check for common Groq errors
-        err_str = str(e)
-        if "401" in err_str or "invalid_api_key" in err_str.lower():
-            return jsonify({"error": "Invalid Groq API key. Get free key at: https://console.groq.com"}), 401
-        if "429" in err_str or "rate_limit" in err_str.lower():
-            return jsonify({"error": "Rate limit reached. Please wait a moment and try again."}), 429
-        return jsonify({"error": f"Chat failed: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
+
+
+def _rule_based_predict(symptoms, age, gender):
+    """Smarter rule-based prediction — common diseases ranked first for few symptoms."""
+    symptom_set = set(s.lower() for s in symptoms)
+    n = len(symptoms)
+
+    # (disease, required_symptoms, bonus_symptoms, severity, common?)
+    # common=True → gets priority when symptom count is low
+    disease_rules = {
+        # ── Very common, low-severity ──────────────────────────
+        "Common Cold":          (["runny nose","cough","sore throat"],          ["headache","fatigue"],              "low",  True),
+        "Allergic Rhinitis":    (["runny nose","sneezing"],                     ["itching","watery eyes"],           "low",  True),
+        "Pharyngitis":          (["sore throat"],                               ["fever","headache"],                "low",  True),
+        "Sinusitis":            (["sinus pressure","nasal congestion"],         ["headache","runny nose"],           "low",  True),
+        "Acid Reflux / GERD":   (["acidity","heartburn"],                       ["chest pain","nausea"],             "low",  True),
+        "Gastritis":            (["stomach pain","nausea"],                     ["vomiting","loss of appetite"],     "low",  True),
+        "Tension Headache":     (["headache"],                                  ["neck stiffness","fatigue"],        "low",  True),
+        "Viral Fever":          (["fever","fatigue"],                           ["chills","body aches"],             "low",  True),
+        "Constipation":         (["constipation"],                              ["stomach pain","bloating"],         "low",  True),
+        "Gastroenteritis":      (["nausea","vomiting","diarrhea"],              ["stomach pain","fever"],            "low",  True),
+        "Food Poisoning":       (["vomiting","diarrhea","stomach pain"],        ["nausea","fever"],                  "low",  True),
+        "UTI":                  (["frequent urination","burning urination"],    ["fever","flank pain"],              "low",  True),
+        "Anemia":               (["fatigue","pallor"],                          ["dizziness","weakness"],            "medium",True),
+        "Vitamin Deficiency":   (["fatigue","weakness"],                        ["bone pain","hair loss"],           "low",  True),
+        "Dehydration":          (["dehydration","dizziness"],                   ["fatigue","dry mouth"],             "low",  True),
+        "Migraine":             (["headache","sensitivity to light"],           ["nausea","dizziness"],              "medium",True),
+        "Allergic Reaction":    (["itching","skin rash"],                       ["hives","swelling"],                "low",  True),
+        "Fungal Infection":     (["itching","skin rash"],                       ["skin peeling"],                   "low",  True),
+        "GERD":                 (["heartburn","acidity / heartburn"],           ["chest pain"],                     "low",  True),
+        "IBS":                  (["stomach pain","bloating","diarrhea"],        ["constipation"],                   "low",  True),
+        # ── Medium severity ───────────────────────────────────
+        "Flu (Influenza)":      (["fever","cough","body aches"],                ["chills","fatigue","headache"],     "medium",True),
+        "COVID-19":             (["fever","cough","loss of smell"],             ["fatigue","shortness of breath"],  "medium",False),
+        "Malaria":              (["fever","chills","sweating"],                 ["headache","nausea","joint pain"], "high", False),
+        "Dengue Fever":         (["fever","severe headache","joint pain"],      ["skin rash","nausea"],             "high", False),
+        "Typhoid Fever":        (["fever","stomach pain","constipation"],       ["headache","loss of appetite"],    "high", False),
+        "Bronchitis":           (["cough","phlegm"],                            ["shortness of breath","fatigue"],  "medium",True),
+        "Pneumonia":            (["cough","fever","shortness of breath"],       ["chest pain","chills"],            "high", False),
+        "Asthma":               (["shortness of breath","wheezing","cough"],   ["chest tightness"],                "high", False),
+        "Hypertension":         (["high blood pressure","headache"],            ["dizziness","palpitations"],       "medium",False),
+        "Diabetes":             (["excessive thirst","frequent urination"],     ["fatigue","blurred vision"],       "medium",False),
+        "Anxiety Disorder":     (["anxiety","palpitations"],                    ["sleep problems","irritability"],  "medium",True),
+        "Depression":           (["depression","sleep problems"],               ["fatigue","lack of concentration"],"medium",True),
+        "Hypothyroidism":       (["fatigue","weight gain","cold intolerance"],  ["hair loss","constipation"],       "medium",False),
+        # ── High severity — need more symptoms ────────────────
+        "Heart Attack":         (["chest pain","shortness of breath","sweating"],["palpitations","arm pain"],      "high", False),
+        "Tuberculosis":         (["coughing blood","night sweats","weight loss"],["low grade fever","fatigue"],    "high", False),
+        "Meningitis":           (["neck stiffness","fever","severe headache"],  ["seizures","confusion"],          "high", False),
+        "Stroke":               (["paralysis","slurred speech","confusion"],    ["severe headache","vision loss"], "high", False),
+        "Appendicitis":         (["lower abdominal pain","fever","nausea"],     ["vomiting","loss of appetite"],   "high", False),
+    }
+
+    scores = {}
+    for disease, (required, bonus, sev, common) in disease_rules.items():
+        req_match  = sum(1 for s in required if any(s in sym.lower() for sym in symptom_set))
+        bon_match  = sum(1 for s in bonus    if any(s in sym.lower() for sym in symptom_set))
+        if req_match == 0:
+            continue
+        req_ratio  = req_match / len(required)
+        bon_ratio  = bon_match / max(len(bonus), 1)
+        base_score = (req_ratio * 70) + (bon_ratio * 30)
+
+        # Penalise high-severity diseases when only 1-2 symptoms given
+        if sev == "high" and n <= 2:
+            base_score *= 0.3
+        elif sev == "high" and n <= 3:
+            base_score *= 0.5
+        elif sev == "medium" and n <= 1:
+            base_score *= 0.6
+
+        # Boost common diseases
+        if common:
+            base_score *= 1.2
+
+        scores[disease] = (base_score, sev)
+
+    sorted_diseases = sorted(scores.items(), key=lambda x: x[1][0], reverse=True)[:6]
+
+    predictions = []
+    for disease, (score, sev) in sorted_diseases:
+        if score < 5:
+            continue
+        info = DISEASE_INFO.get(disease, {})
+        predictions.append({
+            "disease": disease,
+            "probability": round(min(score, 88), 1),
+            "severity": sev,
+            "description": info.get("description", ""),
+            "common_medicines": info.get("common_medicines", ["Consult a doctor"]),
+            "doctors": info.get("doctors", ["General Physician"]),
+            "prevention": info.get("prevention", []),
+            "emergency": info.get("emergency", sev == "high"),
+        })
+
+    severity = _get_overall_severity(predictions)
+    all_doctors = list({d for p in predictions[:3] for d in p.get("doctors", [])})
+    all_medicines = list({m for p in predictions[:2] for m in p.get("common_medicines", [])})
+    is_emergency = any(p.get("emergency", False) for p in predictions[:2])
+
+    return jsonify({
+        "predictions": predictions,
+        "overall_severity": severity,
+        "recommended_doctors": all_doctors[:4],
+        "recommended_medicines": all_medicines[:6],
+        "is_emergency": is_emergency,
+        "symptoms_analyzed": symptoms,
+        "model": "rule_based",
+        "timestamp": datetime.now().isoformat(),
+    })
+
+
+def _get_overall_severity(predictions):
+    if not predictions:
+        return "low"
+    top_pred = predictions[0]
+    if top_pred.get("severity") == "high" and top_pred["probability"] > 40:
+        return "high"
+    if top_pred.get("severity") in ["high", "medium"] and top_pred["probability"] > 25:
+        return "medium"
+    return "low"
+
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    """
+    Gemini AI chatbot for health questions.
+    Body: { "message": "What should I do for fever?", "history": [...], "context": {...} }
+    """
+    try:
+        data = request.get_json()
+        user_message = data.get("message", "")
+        history = data.get("history", [])  # [{"role": "user/assistant", "content": "..."}]
+        context = data.get("context", {})  # optional: current symptoms/predictions
+
+        if not user_message:
+            return jsonify({"error": "No message provided"}), 400
+
+        # Build system prompt
+        system_prompt = """You are an expert AI Health Assistant integrated into a medical app.
+        
+Your role:
+- Provide accurate, empathetic, evidence-based health information
+- Answer questions about symptoms, diseases, medications, diet, and wellness
+- Always recommend consulting a qualified doctor for diagnosis/treatment
+- For emergencies (chest pain, difficulty breathing, stroke symptoms), IMMEDIATELY advise calling 112/911
+- Keep answers concise (3-5 sentences for simple questions, up to 10 for complex ones)
+- Use bullet points for lists
+- Do NOT diagnose definitively — say "may indicate" or "could suggest"
+
+Format responses clearly with:
+🔍 Key information first
+💊 Medication notes (general info only, always say "consult doctor")  
+✅ Actionable tips
+⚠️ Warning signs to watch for
+"""
+
+        if context.get("symptoms"):
+            system_prompt += f"\n\nUser's current symptoms: {', '.join(context['symptoms'])}"
+        if context.get("top_disease"):
+            system_prompt += f"\nAI predicted: {context['top_disease']} ({context.get('top_probability', '')}%)"
+
+        # Build Groq messages (OpenAI-compatible format)
+        messages = [{"role": "system", "content": system_prompt}]
+        for msg in history[-10:]:
+            role = msg.get("role", "user")
+            if role not in ("user", "assistant"):
+                role = "user"
+            messages.append({"role": role, "content": msg.get("content", "")})
+        messages.append({"role": "user", "content": user_message})
+
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            max_tokens=800,
+            temperature=0.7,
+        )
+
+        reply = response.choices[0].message.content
+        return jsonify({
+            "reply": reply,
+            "model": GROQ_MODEL,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/report", methods=["POST"])
-def generate_report():
-    """
-    Generate structured report data for PDF generation.
-
-    Request body:
-    {
-        "symptoms":    ["Fever", "Cough"],
-        "predictions": [...],
-        "user_name":   "Arjun Singh",
-        "age":         25,
-        "gender":      "male"
-    }
-    """
+def generate_report_data():
+    """Generate structured health report data."""
     try:
-        data = request.get_json() or {}
-        return jsonify({
-            "patient_name": data.get("user_name", "Patient"),
-            "age":          data.get("age", "N/A"),
-            "gender":       data.get("gender", "N/A"),
-            "report_date":  datetime.now().strftime("%d %B %Y, %I:%M %p"),
-            "report_id":    f"CH-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "symptoms":     data.get("symptoms", []),
-            "predictions":  data.get("predictions", [])[:3],
-            "disclaimer":   (
-                "This AI-generated health report is for informational purposes only. "
-                "It does NOT constitute a medical diagnosis or replace professional medical advice. "
-                "Always consult a qualified healthcare professional for diagnosis and treatment."
+        data = request.get_json()
+        symptoms = data.get("symptoms", [])
+        predictions = data.get("predictions", [])
+        user_name = data.get("user_name", "Patient")
+        age = data.get("age", "N/A")
+        gender = data.get("gender", "N/A")
+
+        report = {
+            "patient_name": user_name,
+            "age": age,
+            "gender": gender,
+            "report_date": datetime.now().strftime("%d %B %Y, %I:%M %p"),
+            "symptoms": symptoms,
+            "predictions": predictions[:3],
+            "disclaimer": (
+                "This AI-generated report is for informational purposes only. "
+                "It does NOT constitute a medical diagnosis. "
+                "Please consult a qualified healthcare professional for proper medical advice and treatment."
             ),
-            "emergency_note": "For life-threatening emergencies, call 112 (India) or 911 (US) immediately.",
-        })
+            "emergency_note": (
+                "If you experience severe symptoms such as chest pain, difficulty breathing, "
+                "loss of consciousness, or stroke signs, call 112 (India) / 911 (US) IMMEDIATELY."
+            ),
+        }
+
+        return jsonify(report)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# ─────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    port  = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
-
-    print("\n" + "═" * 50)
-    print("   CureHealth AI — Backend Server")
-    print("═" * 50)
-    print(f"   AI Engine  : Groq ({GROQ_MODEL})")
-    print(f"   Groq Key   : {'✅ SET' if GROQ_API_KEY != 'YOUR_GROQ_API_KEY' else '❌ NOT SET — get free key at console.groq.com'}")
-    print(f"   ML Models  : {'✅ Loaded' if rf_model else '⚠️  Not found — run train_model.py'}")
-    print(f"   Diseases   : {len(DISEASE_INFO)} in database")
-    print(f"   Port       : {port}")
-    print(f"   Debug Mode : {debug}")
-    print("═" * 50 + "\n")
-
+    print(f"🚀 Health Assistant API running on port {port}")
     app.run(host="0.0.0.0", port=port, debug=debug)
