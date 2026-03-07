@@ -35,7 +35,7 @@ load_models()
 
 # ─── Gemini Client ───────────────────────────────────────────
 # Get your FREE API key from: https://aistudio.google.com/app/apikey
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY)
 GROQ_MODEL  = "llama-3.3-70b-versatile"
 
@@ -401,36 +401,91 @@ def predict_disease():
         # IMPROVEMENT 4 — Follow-up smart questions
         # ══════════════════════════════════════════════════
         FOLLOWUP_QUESTIONS = {
+            # ── Very common diseases (app ke top results) ─────
+            "Viral Fever":       ["Do you have fever for more than 3 days?",
+                                  "Do you have body aches or joint pain?",
+                                  "Have others around you also fallen sick?"],
+            "Flu (Influenza)":   ["Did the fever start suddenly (within hours)?",
+                                  "Do you have severe body aches and headache?",
+                                  "Are you feeling extremely tired/weak?"],
+            "Common Cold":       ["Do you have runny or blocked nose?",
+                                  "Is your throat sore or scratchy?",
+                                  "Have you been in contact with someone who had cold?"],
+            "Bronchitis":        ["Is your cough producing mucus/phlegm?",
+                                  "Have you had this cough for more than 5 days?",
+                                  "Do you feel chest discomfort while coughing?"],
+            "COVID-19":          ["Have you lost sense of smell or taste?",
+                                  "Have you been in contact with a COVID patient?",
+                                  "Do you have body aches and fatigue together?"],
+            "Pneumonia (Bacterial)": ["Is your cough producing yellow/green mucus?",
+                                  "Do you feel sharp chest pain while breathing?",
+                                  "Do you have high fever (above 102°F) with shivering?"],
             "Malaria":           ["Have you been bitten by mosquitoes recently?",
                                   "Do you have cyclical (every 2-3 day) fever?",
                                   "Have you travelled to a forest or rural area?"],
             "Dengue Fever":      ["Do you have pain behind the eyes?",
                                   "Have you noticed red spots on your skin?",
-                                  "Is there platelet drop in blood test?"],
-            "Typhoid Fever":     ["How many days have you had fever (>5 days)?",
-                                  "Do you have rose-colored spots on abdomen?",
-                                  "Is your fever worse in the evening?"],
-            "Tuberculosis (Pulmonary)":["Have you been coughing for more than 2 weeks?",
-                                  "Do you have a TB-positive contact at home?",
+                                  "Is there extreme fatigue with joint/bone pain?"],
+            "Typhoid Fever":     ["Have you had fever for more than 5 days?",
+                                  "Do you have stomach pain and constipation?",
+                                  "Is your fever getting worse in the evening?"],
+            "Tuberculosis (Pulmonary)": ["Have you been coughing for more than 2 weeks?",
+                                  "Do you have a TB patient at home or work?",
                                   "Have you lost significant weight recently?"],
-            "COVID-19":          ["Have you lost sense of smell or taste?",
-                                  "Have you been in contact with a COVID patient?",
-                                  "Do you have body aches and fatigue together?"],
-            "Pneumonia (Bacterial)":["Is your cough producing yellow/green mucus?",
-                                  "Do you feel sharp chest pain on breathing?",
-                                  "Do you have high fever with shivering?"],
-            "Asthma":            ["Do symptoms worsen at night or early morning?",
-                                  "Do you have allergies (dust, pollen, pets)?",
-                                  "Does exercise trigger your breathlessness?"],
-            "Urinary Tract Infection":["Is there pain in lower abdomen or back?",
+            "Gastroenteritis":   ["Did symptoms start after eating outside food?",
+                                  "Do you have watery diarrhea more than 3 times?",
+                                  "Are others who ate the same food also sick?"],
+            "Food Poisoning":    ["Did symptoms start within hours of eating?",
+                                  "Did you eat street food or stale food recently?",
+                                  "Are you having both vomiting and diarrhea?"],
+            "Acid Reflux / GERD":["Do you feel burning in chest after eating?",
+                                  "Do symptoms worsen when you lie down?",
+                                  "Do you feel sour taste coming up in throat?"],
+            "Gastritis":         ["Do you feel pain or burning in upper stomach?",
+                                  "Does eating make the pain worse or better?",
+                                  "Are you taking painkillers (ibuprofen/aspirin) regularly?"],
+            "UTI":               ["Is there pain or burning when you urinate?",
+                                  "Is your urine cloudy or strong-smelling?",
+                                  "Do you feel need to urinate frequently?"],
+            "Urinary Tract Infection": ["Is there pain or burning when you urinate?",
                                   "Is your urine cloudy or foul-smelling?",
                                   "Do you feel urgency to urinate frequently?"],
+            "Anemia":            ["Do you feel dizzy when you stand up quickly?",
+                                  "Are your nails or inner eyelids very pale?",
+                                  "Do you feel breathless even with light activity?"],
+            "Hypertension":      ["Do you get frequent headaches in the morning?",
+                                  "Do you feel dizzy or have blurred vision at times?",
+                                  "Do you have a family history of high blood pressure?"],
+            "Diabetes (Type 2)": ["Are you urinating very frequently, especially at night?",
+                                  "Do you feel extremely thirsty throughout the day?",
+                                  "Have you noticed slow healing of cuts or wounds?"],
+            "Asthma":            ["Do symptoms worsen at night or early morning?",
+                                  "Do you have allergies to dust, pollen, or pets?",
+                                  "Does exercise or cold air trigger breathlessness?"],
+            "Migraine":          ["Is the headache on one side of the head?",
+                                  "Do you feel nausea or sensitivity to light/sound?",
+                                  "Does physical activity make the headache worse?"],
             "Appendicitis":      ["Does the pain start near navel and move to right side?",
-                                  "Does the pain worsen on movement?",
-                                  "Do you have fever with loss of appetite?"],
-            "Heart Attack":      ["Is the pain spreading to left arm or jaw?",
+                                  "Does the pain worsen on movement or pressing?",
+                                  "Do you have fever with complete loss of appetite?"],
+            "Heart Attack":      ["Is the pain spreading to left arm, jaw, or back?",
                                   "Are you sweating profusely with chest pain?",
-                                  "Do you have a history of heart disease?"],
+                                  "Do you have a history of heart disease or high BP?"],
+            "Allergic Rhinitis": ["Do symptoms worsen in dusty or polluted areas?",
+                                  "Do you sneeze frequently in the morning?",
+                                  "Do you have itchy or watery eyes along with sneezing?"],
+            "Sinusitis":         ["Do you have pain or pressure around eyes and forehead?",
+                                  "Is your nose blocked on one or both sides?",
+                                  "Do you have thick yellow/green discharge from nose?"],
+            "Tension Headache":  ["Is the headache like a tight band around head?",
+                                  "Are you under stress or not sleeping well?",
+                                  "Does the headache last for hours and come daily?"],
+            "Depression":        ["Have you felt sad or hopeless for more than 2 weeks?",
+                                  "Have you lost interest in activities you enjoyed?",
+                                  "Are you having trouble sleeping or sleeping too much?"],
+            "Anxiety Disorder":  ["Do you feel worried or fearful without clear reason?",
+                                  "Do you get heart pounding or sweating with anxiety?",
+                                  "Is anxiety affecting your daily work or sleep?"],
         }
 
         # Build feature vector for ML
@@ -547,6 +602,13 @@ def predict_disease():
         if predictions:
             top_medicines = predictions[0].get("common_medicines", [])[:6]
 
+        # Build per-disease followup list
+        all_followups = [
+            {"disease": p["disease"], "questions": p.get("followup_questions", [])}
+            for p in predictions
+            if p.get("followup_questions")
+        ]
+
         return jsonify({
             "predictions":           predictions,
             "overall_severity":      severity,
@@ -556,6 +618,7 @@ def predict_disease():
             "symptoms_analyzed":     selected_symptoms,
             "followup_questions":    predictions[0].get("followup_questions", []) if predictions else [],
             "top_disease":           predictions[0]["disease"] if predictions else "",
+            "all_followups":         all_followups,
             "timestamp":             datetime.now().isoformat(),
         })
 
@@ -714,6 +777,12 @@ def _rule_based_predict(symptoms, age, gender):
     # Improvement 5: medicines only from top disease
     top_medicines = predictions[0].get("common_medicines", [])[:6] if predictions else []
 
+    all_followups = [
+        {"disease": p["disease"], "questions": p.get("followup_questions", [])}
+        for p in predictions
+        if p.get("followup_questions")
+    ]
+
     return jsonify({
         "predictions":           predictions,
         "overall_severity":      severity,
@@ -723,6 +792,7 @@ def _rule_based_predict(symptoms, age, gender):
         "symptoms_analyzed":     symptoms,
         "followup_questions":    predictions[0].get("followup_questions", []) if predictions else [],
         "top_disease":           predictions[0]["disease"] if predictions else "",
+        "all_followups":         all_followups,
         "model":                 "rule_based",
         "timestamp":             datetime.now().isoformat(),
     })
